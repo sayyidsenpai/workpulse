@@ -236,3 +236,9 @@ Design points worth knowing:
   document. If they ever stop arriving, the idle threshold still pauses tracking.
 - A debug build accepts `--snapshot <folder>` to render every screen to PNG (used to check the UI
   where screen capture is unavailable). It is compiled out of release builds.
+
+## License
+
+MIT, copyright (c) 2026 sayyidsenpai. See [LICENSE](LICENSE). You may use, change and redistribute
+WorkPulse, including commercially, as long as the copyright notice and the license text stay with
+every copy or substantial portion of it.

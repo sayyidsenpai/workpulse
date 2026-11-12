@@ -237,6 +237,11 @@ Design points worth knowing:
 - A debug build accepts `--snapshot <folder>` to render every screen to PNG (used to check the UI
   where screen capture is unavailable). It is compiled out of release builds.
 
+## Support
+
+WorkPulse is free and open source. If it is useful to you, you can support its development through
+[GitHub Sponsors](https://github.com/sponsors/sayyidsenpai).
+
 ## License
 
 MIT, copyright (c) 2026 sayyidsenpai. See [LICENSE](LICENSE). You may use, change and redistribute

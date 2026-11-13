@@ -6,7 +6,8 @@
 #   agent-hook.sh <tool> done    on Stop, SessionEnd
 # <tool> is claude-code or codex.
 #
-# It only touches or removes an empty marker file named after the tool and the session id.
+# It only touches or removes an empty marker file named after the tool and the session id,
+# and touches `.seen-<tool>` so WorkPulse can show that this agent is connected.
 # It uses nothing else from the hook input, prints nothing (hook output could end up in the
 # agent's context) and always succeeds, so it can never block or alter the agent.
 # By project convention: no `set -e`, no `exit`.
@@ -16,8 +17,9 @@ id="$(sed -n 's/.*"session_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' 2>/de
 tool="$(printf '%s' "${1:-agent}" | tr -cd 'A-Za-z0-9_-')"
 file="$dir/$tool.${id:-session}"
 
+mkdir -p "$dir" 2>/dev/null && touch "$dir/.seen-$tool" 2>/dev/null
 if [ "$2" = "busy" ]; then
-    mkdir -p "$dir" 2>/dev/null && touch "$file" 2>/dev/null
+    touch "$file" 2>/dev/null
 else
     rm -f "$file" 2>/dev/null
 fi

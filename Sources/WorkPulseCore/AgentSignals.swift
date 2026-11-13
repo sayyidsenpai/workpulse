@@ -8,6 +8,21 @@ import Foundation
 /// prompts, transcripts or output.
 public enum AgentSignals {
     static let names = ["claude-code": "Claude Code", "codex": "Codex"]
+    /// The agents WorkPulse can detect, by the name their hook passes.
+    public static let tools = ["claude-code", "codex"]
+
+    public static func name(_ tool: String) -> String { names[tool] ?? tool }
+
+    /// When the hook of `tool` last ran, or nil if it never did: the agent is not connected.
+    /// The hook touches `.seen-<tool>` on every call; a working marker counts as well.
+    public static func lastSignal(_ tool: String, in directory: URL) -> Date? {
+        let fm = FileManager.default
+        let directory = directory.resolvingSymlinksInPath()
+        let files = (try? fm.contentsOfDirectory(at: directory, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
+        return files.filter { $0.lastPathComponent == ".seen-\(tool)" || $0.lastPathComponent.hasPrefix("\(tool).") }
+            .compactMap { (try? $0.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate }
+            .max()
+    }
 
     /// - Returns: `agent`, the display name(s) of agents whose marker was touched within `quiet`
     ///   seconds, or nil; and `staleFor`, set when a marker had gone quiet for longer than that

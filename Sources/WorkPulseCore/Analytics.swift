@@ -105,6 +105,20 @@ public enum Aggregator {
         return sums.sorted { $0.value == $1.value ? $0.key < $1.key : $0.value > $1.value }.map { (key: $0.key, seconds: $0.value) }
     }
 
+    /// Work time on `day` that is outside the work hours.
+    public static func overtime(_ sessions: [Session], on day: LocalDay, schedule: WorkSchedule) -> TimeInterval {
+        guard schedule.isUsable else { return 0 }
+        let dayStart = Double(day.index) * 86400
+        var total: TimeInterval = 0
+        for s in sessions where s.kind == .work {
+            let offset = Double(s.tzOffset)
+            let a = max(s.start.timeIntervalSince1970 + offset, dayStart)
+            let b = min(s.end.timeIntervalSince1970 + offset, dayStart + 86400)
+            if b > a { total += (b - a) - schedule.overlap(localFrom: a, to: b) }
+        }
+        return total
+    }
+
     /// Work time per day/week/month bucket across `range`, including empty buckets.
     public static func trend(_ totals: [LocalDay: DayTotals], in range: ClosedRange<LocalDay>, by period: Period,
                              firstWeekday: Int) -> [(start: LocalDay, seconds: TimeInterval)] {
@@ -161,11 +175,13 @@ public enum Goals {
             work += seconds
             if isWorkingDay(seconds, on: d, configs: configs, projectID: projectID) { workingDays += 1 }
         }
+        // A week or month without its own goal takes the daily goal for each of its work days.
+        let derived = config.flatMap { c in c.dailyHours.map { $0 * Double(range.days.filter { c.workingDays.contains($0.weekday) }.count) } }
         let hours: Double?
         switch period {
         case .day: hours = config.flatMap { $0.workingDays.contains(day.weekday) ? $0.dailyHours : nil }
-        case .week: hours = config?.weeklyHours
-        case .month: hours = config?.monthlyHours
+        case .week: hours = config?.weeklyHours ?? derived
+        case .month: hours = config?.monthlyHours ?? derived
         }
         return PeriodResult(period: period, range: range, workSeconds: work, targetSeconds: hours.map { $0 * 3600 },
                             workingDays: workingDays, daysTarget: period == .week ? config?.weeklyDays : nil)

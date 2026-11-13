@@ -1,12 +1,20 @@
 #if DEBUG
 import AppKit
 import SwiftUI
+import WorkPulseCore
 
 extension AppModel {
+    /// `WORKPULSE_DEMO=1` with `--snapshot`: pictures for the documentation. The front application
+    /// is fixed (Xcode), the session clock is set by hand and the real application icon is used.
+    /// Run it with a data folder that holds sample data, never with real data.
+    static let demo = ProcessInfo.processInfo.environment["WORKPULSE_DEMO"] != nil
+
     /// Development aid, debug builds only (`WorkPulse --snapshot <folder>`): renders every screen
     /// to a PNG, in light and dark appearance, so the UI can be reviewed without screen capture.
     func snapshot(to folder: URL) async {
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        Motion.off = true
+        if Self.demo, let icon = NSImage(contentsOfFile: "Packaging/AppIcon.icns") { NSApp.applicationIconImage = icon }
         for (suffix, appearance) in [("", NSAppearance.Name.aqua), ("-dark", .darkAqua)] {
             await capture(DashboardView().environment(self), size: nil, appearance: appearance,
                           to: folder.appendingPathComponent("dashboard\(suffix).png"))
@@ -14,12 +22,53 @@ extension AppModel {
                 await capture(SessionEditor(session: session).environment(self), size: nil, appearance: appearance,
                               to: folder.appendingPathComponent("editor\(suffix).png"))
             }
+            await capture(statesSheet(), size: nil, appearance: appearance, to: folder.appendingPathComponent("states\(suffix).png"))
+            refresh()
+            for step in 0..<4 {
+                await capture(OnboardingView(step: step).environment(self), size: NSSize(width: 760, height: 640), appearance: appearance,
+                              to: folder.appendingPathComponent("onboarding-\(step + 1)\(suffix).png"))
+            }
+            for tool in ["claude-code", "codex"] {
+                await capture(AgentSetupSheet(tool: tool).environment(self), size: nil, appearance: appearance,
+                              to: folder.appendingPathComponent("setup-\(tool)\(suffix).png"))
+            }
             for tab in MainTab.allCases {
                 self.tab = tab
-                await capture(MainView().environment(self), size: NSSize(width: 940, height: 800), appearance: appearance,
+                await capture(MainView().environment(self), size: NSSize(width: 1080, height: Self.demo ? 720 : 800), appearance: appearance,
                               to: folder.appendingPathComponent("\(tab.rawValue.lowercased())\(suffix).png"))
             }
+            // Settings is longer than the window: one tall picture shows all of it.
+            await capture(MainView().environment(self), size: NSSize(width: 1080, height: 1700), appearance: appearance,
+                          to: folder.appendingPathComponent("settings-full\(suffix).png"))
         }
+    }
+
+    /// Every status the popover can show, side by side. The state is set by hand for the picture only.
+    private func statesSheet() -> some View {
+        var heroes: [Hero] = []
+        func add(_ status: TrackingEngine.Status, overtime: Bool = false, agent: Bool = false, ask: Bool = false) {
+            self.status = status
+            isOvertime = overtime
+            agentWorking = agent
+            suggestion = ask ? Suggestion(app: "Xcode", minutes: 12) : nil
+            heroes.append(hero)
+        }
+        sessionStart = Date().addingTimeInterval(-2712)
+        pausedAt = Date()
+        add(.tracking(.work))
+        add(.tracking(.work), agent: true)
+        add(.tracking(.work), overtime: true)
+        add(.tracking(.nonwork))
+        add(.idle)
+        add(.paused)
+        add(.personal)
+        add(.personal, ask: true)
+        add(.tracking(.excluded))
+        return LazyVGrid(columns: Array(repeating: GridItem(.fixed(364), spacing: 14), count: 3), spacing: 14) {
+            ForEach(Array(heroes.enumerated()), id: \.offset) { HeroCard(hero: $0.element) }
+        }
+        .padding(14)
+        .background(Wallpaper())
     }
 
     private func capture(_ view: some View, size: NSSize?, appearance: NSAppearance.Name, to url: URL) async {
@@ -33,7 +82,9 @@ extension AppModel {
         window.contentView = host
         window.setFrameOrigin(NSPoint(x: -30000, y: -30000))  // off screen
         window.orderFrontRegardless()
-        try? await Task.sleep(for: .seconds(1.5))  // let onAppear-driven loads finish
+        try? await Task.sleep(for: .seconds(0.7))  // let onAppear-driven loads finish
+        if Self.demo { sessionStart = Date().addingTimeInterval(-2712) }
+        try? await Task.sleep(for: .seconds(0.8))
         if let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds) {
             host.cacheDisplay(in: host.bounds, to: bitmap)
             try? bitmap.representation(using: .png, properties: [:])?.write(to: url)

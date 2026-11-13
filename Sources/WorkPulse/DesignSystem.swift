@@ -1,0 +1,476 @@
+import AppKit
+import SwiftUI
+import WorkPulseCore
+
+// The visual language of WorkPulse: one palette, one type scale, one set of controls.
+// Colour always comes with a second signal (an icon, a text or a pattern), never alone.
+
+private func rgb(_ hex: UInt32, _ alpha: Double = 1) -> NSColor {
+    NSColor(srgbRed: Double((hex >> 16) & 0xFF) / 255, green: Double((hex >> 8) & 0xFF) / 255,
+            blue: Double(hex & 0xFF) / 255, alpha: alpha)
+}
+
+private func dyn(_ light: NSColor, _ dark: NSColor) -> Color {
+    Color(nsColor: NSColor(name: nil) { $0.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? dark : light })
+}
+
+enum WP {
+    // Brand and semantic colours. Fixed colours carry their own text colour (see `Hero`).
+    static let cobalt = Color(nsColor: rgb(0x2261E3))          // work, primary action
+    static let navy = Color(nsColor: rgb(0x0D1B4D))            // overtime, sleep
+    static let amber = Color(nsColor: rgb(0xF5A524))           // idle, attention
+    static let amberInk = Color(nsColor: rgb(0x2B1700))
+    static let amberHatch = Color(nsColor: rgb(0xB45309))
+    static let slate = Color(nsColor: rgb(0x3F4A5A))           // paused
+    static let switchOff = Color(nsColor: rgb(0x6B7686))
+    static let red = dyn(rgb(0xC62828), rgb(0xFF8A80))         // delete only
+    // Text on the fixed colours above (the same in light and dark appearance).
+    static let fixedInk = Color(nsColor: rgb(0x0D1117))
+    static let fixedBlue = Color(nsColor: rgb(0x1A4FC4))
+    static let onCobalt = Color(nsColor: rgb(0xEAF1FF))
+    static let onNavy = Color(nsColor: rgb(0xDCE6F7))
+    static let onSlate = Color(nsColor: rgb(0xE8ECF4))
+
+    // Text.
+    static let ink = dyn(rgb(0x0D1117), rgb(0xF2F5FA))
+    static let secondary = dyn(rgb(0x3F4A5A), rgb(0xC9D0DC))
+    static let caption = dyn(rgb(0x4B5565), rgb(0xAEB7C6))
+    static let textBlue = dyn(rgb(0x1A4FC4), rgb(0x9DBEFF))
+
+    // Status backgrounds with their text colours.
+    static let green = dyn(rgb(0x1A7F45), rgb(0x3FBF7A))       // goal reached, connected
+    static let greenInk = dyn(rgb(0x125C32), rgb(0x9BE5BB))
+    static let greenBg = dyn(rgb(0xE3F4EA), rgb(0x12351F))
+    static let infoBg = dyn(rgb(0xE6EEFF), rgb(0x16264F))
+    static let warnBg = dyn(rgb(0xFFF1D6), rgb(0x3A2A08))
+    static let warnInk = dyn(rgb(0x5C2E00), rgb(0xFFD899))
+    static let heroLight = dyn(rgb(0xE8ECF4), rgb(0x2A3242))   // Personal, non-work
+
+    // Surfaces and lines.
+    static let card = dyn(rgb(0xFFFFFF, 0.66), rgb(0xFFFFFF, 0.07))
+    static let cardStrong = dyn(rgb(0xFFFFFF, 0.78), rgb(0xFFFFFF, 0.10))
+    static let field = dyn(rgb(0xFFFFFF), rgb(0x1B2130))
+    static let border = dyn(rgb(0x0D1B4D, 0.55), rgb(0xFFFFFF, 0.50))   // control outlines, 3:1 or more
+    static let hairline = dyn(rgb(0x0D1B4D, 0.10), rgb(0xFFFFFF, 0.12))
+    static let track = dyn(rgb(0x0D1B4D, 0.12), rgb(0xFFFFFF, 0.16))
+    static let hover = dyn(rgb(0x0D1B4D, 0.08), rgb(0xFFFFFF, 0.10))
+
+    /// Type scale: 11 · 12 · 13 · 14 · 15 · 20 · 24 · 32 · 44 · 48.
+    static func font(_ size: CGFloat, _ weight: Font.Weight = .regular) -> Font { .system(size: size, weight: weight) }
+
+    static let spring = Animation.spring(response: 0.42, dampingFraction: 0.8)
+}
+
+// MARK: - Formats
+
+extension Fmt {
+    /// Clock time as "08.00" (24-hour, as in the whole interface).
+    static func time(minutes: Int) -> String {
+        let m = ((minutes % 1440) + 1440) % 1440
+        return String(format: "%02d.%02d", m / 60, m % 60)
+    }
+
+    static func time(_ date: Date) -> String {
+        let c = Calendar.current.dateComponents([.hour, .minute], from: date)
+        return time(minutes: (c.hour ?? 0) * 60 + (c.minute ?? 0))
+    }
+
+    /// "Fri 08.00"
+    static func dayTime(_ date: Date) -> String {
+        "\(Calendar.current.shortWeekdaySymbols[Calendar.current.component(.weekday, from: date) - 1]) \(time(date))"
+    }
+
+    /// A whole number of minutes as "6h 00m" or "30m".
+    static func minutes(_ minutes: Int) -> String { duration(Double(max(0, minutes)) * 60, seconds: false) }
+}
+
+// MARK: - Backgrounds
+
+/// The soft blue, cyan and peach wallpaper behind every glass surface.
+struct Wallpaper: View {
+    @Environment(\.colorScheme) private var scheme
+
+    var body: some View {
+        let dark = scheme == .dark
+        ZStack {
+            (dark ? Color(nsColor: rgb(0x0B1020)) : Color(nsColor: rgb(0xDCE6F7)))
+            GeometryReader { geo in
+                let w = geo.size.width, h = geo.size.height, side = max(w, h)
+                ZStack {
+                    blob(rgb(dark ? 0x1D3E8F : 0x8FB8FF), at: UnitPoint(x: 0.06, y: 0.06), radius: side * 0.55)
+                    blob(rgb(dark ? 0x12506B : 0xB8ECFF), at: UnitPoint(x: 0.96, y: 0.22), radius: side * 0.5)
+                    blob(rgb(dark ? 0x5A3320 : 0xFFD2AE), at: UnitPoint(x: 0.85, y: 1), radius: side * 0.5)
+                }
+                .frame(width: w, height: h)
+            }
+        }
+        .accessibilityHidden(true)
+    }
+
+    private func blob(_ color: NSColor, at center: UnitPoint, radius: CGFloat) -> some View {
+        RadialGradient(colors: [Color(nsColor: color), Color(nsColor: color.withAlphaComponent(0))],
+                       center: center, startRadius: 0, endRadius: radius)
+    }
+}
+
+/// Real translucency: the desktop shows through, blurred by macOS.
+struct Glass: NSViewRepresentable {
+    var material = NSVisualEffectView.Material.underWindowBackground
+
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let view = NSVisualEffectView()
+        view.blendingMode = .behindWindow
+        view.state = .active
+        view.material = material
+        return view
+    }
+
+    func updateNSView(_ view: NSVisualEffectView, context: Context) { view.material = material }
+}
+
+/// Diagonal stripes: the second signal for agent time (on cobalt) and idle time (on amber).
+struct Hatch: View {
+    var color: Color
+    var width: CGFloat = 2
+    var gap: CGFloat = 4
+
+    var body: some View {
+        Canvas { context, size in
+            var path = Path()
+            var x = -size.height
+            while x < size.width {
+                path.move(to: CGPoint(x: x, y: size.height))
+                path.addLine(to: CGPoint(x: x + size.height, y: 0))
+                x += width + gap
+            }
+            context.stroke(path, with: .color(color), lineWidth: width)
+        }
+        .accessibilityHidden(true)
+    }
+}
+
+// MARK: - Surfaces
+
+extension View {
+    /// A glass card: the unit of grouping on every screen.
+    func wpCard(padding: CGFloat = 16, radius: CGFloat = 14, strong: Bool = false) -> some View {
+        self.padding(padding)
+            .background(strong ? WP.cardStrong : WP.card, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: radius, style: .continuous).strokeBorder(WP.hairline))
+    }
+
+    /// Content rises into place when a screen opens (skipped with Reduce Motion).
+    func wpRise(_ index: Int = 0) -> some View { modifier(Rise(index: index)) }
+
+    /// The standard outline for text fields and menus.
+    func wpField(height: CGFloat = 32, radius: CGFloat = 8) -> some View {
+        self.padding(.horizontal, 10)
+            .frame(height: height)
+            .background(WP.field, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: radius, style: .continuous).strokeBorder(WP.border))
+    }
+}
+
+/// Entrance animations can be switched off (the snapshot harness draws finished screens).
+@MainActor enum Motion { static var off = false }
+
+private struct Rise: ViewModifier {
+    let index: Int
+    @State private var shown = Motion.off
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func body(content: Content) -> some View {
+        content
+            .opacity(shown || reduceMotion ? 1 : 0.3)
+            .offset(y: shown || reduceMotion ? 0 : 12)
+            .onAppear {
+                withAnimation(.easeOut(duration: 0.52).delay(Double(index) * 0.06)) { shown = true }
+            }
+    }
+}
+
+/// Screen title with one line that says what the screen is for.
+struct ScreenHeader<Trailing: View>: View {
+    let title: String
+    let subtitle: String
+    @ViewBuilder var trailing: Trailing
+
+    var body: some View {
+        HStack(alignment: .bottom, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title).font(WP.font(24, .bold)).tracking(-0.4).foregroundStyle(WP.ink)
+                    .accessibilityAddTraits(.isHeader)
+                Text(subtitle).font(WP.font(13)).foregroundStyle(WP.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 12)
+            trailing
+        }
+    }
+}
+
+extension ScreenHeader where Trailing == EmptyView {
+    init(title: String, subtitle: String) { self.init(title: title, subtitle: subtitle) { EmptyView() } }
+}
+
+/// Card heading.
+struct SectionTitle: View {
+    let text: String
+    init(_ text: String) { self.text = text }
+
+    var body: some View {
+        Text(text).font(WP.font(15, .bold)).foregroundStyle(WP.ink).accessibilityAddTraits(.isHeader)
+    }
+}
+
+/// Small label above a control.
+struct FieldLabel: View {
+    let text: String
+    init(_ text: String) { self.text = text }
+
+    var body: some View { Text(text).font(WP.font(12, .medium)).foregroundStyle(WP.caption) }
+}
+
+// MARK: - Controls
+
+/// The switch itself: track, knob and check mark. It draws its own focus ring in the shape of
+/// the track (the system ring is a rectangle and shows as a box behind the switch).
+struct WPSwitch: View {
+    @Binding var isOn: Bool
+    var width: CGFloat = 44
+    var height: CGFloat = 26
+    /// A light outline, for a switch on a dark surface.
+    var outlined = false
+    @FocusState private var focused: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        ZStack(alignment: isOn ? .trailing : .leading) {
+            // The outline is a light capsule under the track. A stroked border draws stray marks at both ends.
+            if outlined { Capsule().fill(.white.opacity(0.6)) }
+            Capsule().fill(isOn ? WP.cobalt : WP.switchOff).padding(outlined ? 1.5 : 0)
+            Circle().fill(.white).shadow(color: .black.opacity(0.3), radius: 1.5, y: 1)
+                .overlay {
+                    if isOn {
+                        Image(systemName: "checkmark").font(.system(size: height * 0.38, weight: .heavy)).foregroundStyle(WP.fixedBlue)
+                    }
+                }
+                .frame(width: height - 4, height: height - 4)
+                .padding(2)
+        }
+        .frame(width: width, height: height)
+        .animation(reduceMotion ? nil : .spring(response: 0.25, dampingFraction: 0.8), value: isOn)
+        .background {
+            // Focus ring: 3 pt blue outside 2 pt white, as filled capsules under the track.
+            if focused {
+                Capsule().fill(WP.textBlue).padding(-5)
+                Capsule().fill(.white).padding(-2)
+            }
+        }
+        // Like a button: it takes keyboard focus only when keyboard navigation is on.
+        .focusable(true, interactions: .activate)
+        .focused($focused)
+        .focusEffectDisabled()
+        .onKeyPress(.space) { isOn.toggle(); return .handled }
+    }
+}
+
+/// Switch with a check mark and the word On or Off: the state never depends on colour alone.
+struct WPSwitchStyle: ToggleStyle {
+    @Environment(\.isEnabled) private var enabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(spacing: 12) {
+            configuration.label.font(WP.font(13, .medium)).foregroundStyle(WP.ink)
+            Spacer(minLength: 8)
+            Text(configuration.isOn ? "On" : "Off").font(WP.font(13, .semibold)).foregroundStyle(WP.secondary)
+                .frame(minWidth: 22, alignment: .trailing).accessibilityHidden(true)
+            WPSwitch(isOn: configuration.$isOn)
+        }
+        .contentShape(Rectangle())
+        .onTapGesture { configuration.isOn.toggle() }
+        .opacity(enabled ? 1 : 0.45)
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityValue(configuration.isOn ? "On" : "Off")
+        .accessibilityAction { configuration.isOn.toggle() }
+    }
+}
+
+/// Filled button. `fill` and `text` are given by the surface it sits on.
+struct WPButtonStyle: ButtonStyle {
+    enum Kind { case primary, secondary, destructive, plain }
+    var kind = Kind.secondary
+    var fill: Color?
+    var text: Color?
+    var height: CGFloat = 32
+    var radius: CGFloat = 8
+    var expand = false
+    @Environment(\.isEnabled) private var enabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        let background: Color = fill ?? {
+            switch kind {
+            case .primary: WP.cobalt
+            case .destructive: Color(nsColor: rgb(0xC62828))
+            case .secondary: WP.field
+            case .plain: WP.hover
+            }
+        }()
+        let foreground: Color = text ?? (kind == .primary || kind == .destructive ? .white : WP.ink)
+        return configuration.label
+            .font(WP.font(height >= 40 ? 14 : 13, .semibold))
+            .foregroundStyle(foreground)
+            .padding(.horizontal, 12)
+            .frame(maxWidth: expand ? .infinity : nil, minHeight: height, maxHeight: height)
+            .background(background, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
+            .overlay {
+                if kind == .secondary && fill == nil {
+                    RoundedRectangle(cornerRadius: radius, style: .continuous).strokeBorder(WP.border)
+                }
+            }
+            .brightness(configuration.isPressed ? -0.06 : 0)
+            .scaleEffect(configuration.isPressed ? 0.97 : 1)
+            .animation(.easeOut(duration: 0.1), value: configuration.isPressed)
+            .opacity(enabled ? 1 : 0.45)
+            .contentShape(RoundedRectangle(cornerRadius: radius))
+    }
+}
+
+/// Progress bar. The fill grows from the left when it appears.
+struct WPBar: View {
+    var fraction: Double
+    var color: Color = WP.cobalt
+    var height: CGFloat = 8
+    var label = ""
+    @State private var grown = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        let value = min(1, max(0, fraction))
+        GeometryReader { geo in
+            ZStack(alignment: .leading) {
+                Capsule().fill(WP.track)
+                Capsule().fill(color).frame(width: max(value > 0 ? height : 0, geo.size.width * (grown || reduceMotion ? value : 0)))
+            }
+        }
+        .frame(height: height)
+        .onAppear { withAnimation(.easeOut(duration: 0.9).delay(0.3)) { grown = true } }
+        .animation(.linear(duration: 0.2), value: value)
+        .accessibilityElement()
+        .accessibilityLabel(label)
+        .accessibilityValue("\(Int((value * 100).rounded())) percent")
+    }
+}
+
+/// Work-day buttons, Monday style order from the first weekday. A check mark shows the selected days.
+struct DayChips: View {
+    @Binding var days: Set<Int>
+    let firstWeekday: Int
+    /// The last selected day cannot be removed when this is true.
+    var keepOne = true
+
+    var body: some View {
+        HStack(spacing: 4) {
+            ForEach((0..<7).map { (firstWeekday - 1 + $0) % 7 + 1 }, id: \.self) { day in
+                let on = days.contains(day)
+                Button {
+                    if on { if !keepOne || days.count > 1 { days.remove(day) } } else { days.insert(day) }
+                } label: {
+                    HStack(spacing: 3) {
+                        if on { Image(systemName: "checkmark").font(.system(size: 9, weight: .heavy)) }
+                        Text(Calendar.current.shortWeekdaySymbols[day - 1]).font(WP.font(12, on ? .semibold : .medium))
+                    }
+                    .foregroundStyle(on ? Color.white : WP.secondary)
+                    .frame(maxWidth: .infinity, minHeight: 34)
+                    .background(on ? WP.cobalt : WP.field, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(on ? WP.cobalt : WP.border))
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(Calendar.current.weekdaySymbols[day - 1])
+                .accessibilityAddTraits(on ? .isSelected : [])
+            }
+        }
+    }
+}
+
+/// A coloured note with an icon: information (blue), attention (amber) or success (green).
+struct Note: View {
+    enum Tone { case info, warn, good }
+    var tone = Tone.info
+    let text: String
+
+    var body: some View {
+        let (symbol, ink, background): (String, Color, Color) = switch tone {
+        case .info: ("info.circle.fill", WP.textBlue, WP.infoBg)
+        case .warn: ("exclamationmark.triangle.fill", WP.warnInk, WP.warnBg)
+        case .good: ("checkmark.circle.fill", WP.greenInk, WP.greenBg)
+        }
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Image(systemName: symbol).foregroundStyle(ink)
+            Text(text).font(WP.font(12)).foregroundStyle(WP.ink).fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+        .padding(10)
+        .background(background, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+}
+
+/// Application icons by bundle identifier, read once from macOS.
+@MainActor
+enum AppIcons {
+    // ponytail: no refresh; an application installed while WorkPulse runs gets its icon at the next launch.
+    private static var cache: [String: NSImage?] = [:]
+
+    static func icon(_ bundleID: String?) -> NSImage? {
+        guard let bundleID, !bundleID.hasPrefix("agent.") else { return nil }
+        if let known = cache[bundleID] { return known }
+        let image = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID).map { NSWorkspace.shared.icon(forFile: $0.path) }
+        cache[bundleID] = image
+        return image
+    }
+}
+
+/// The picture of an application: its real icon when macOS knows the application, a terminal
+/// symbol for an AI agent, a given symbol, or else its first letter on navy.
+struct AppTile: View {
+    let name: String?
+    var bundleID: String? = nil
+    var symbol: String? = nil
+    var size: CGFloat = 36
+
+    var body: some View {
+        Group {
+            if let icon = AppIcons.icon(bundleID) {
+                Image(nsImage: icon).resizable().interpolation(.high).frame(width: size, height: size)
+            } else {
+                Group {
+                    if let glyph = symbol ?? (bundleID?.hasPrefix("agent.") == true ? "terminal" : nil) {
+                        Image(systemName: glyph).font(.system(size: size * 0.45, weight: .bold))
+                    } else {
+                        Text(name?.first.map { String($0).uppercased() } ?? "–").font(WP.font(size * 0.42, .bold))
+                    }
+                }
+                .foregroundStyle(.white)
+                .frame(width: size, height: size)
+                .background(WP.navy, in: RoundedRectangle(cornerRadius: size * 0.22, style: .continuous))
+            }
+        }
+        .accessibilityHidden(true)
+    }
+}
+
+/// A slow pulse for the "live" indicator (still with Reduce Motion).
+struct Pulse: ViewModifier {
+    var active = true
+    @State private var dim = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func body(content: Content) -> some View {
+        content.opacity(active && dim && !reduceMotion ? 0.45 : 1)
+            .onAppear {
+                guard active, !reduceMotion else { return }
+                withAnimation(.easeInOut(duration: 1).repeatForever(autoreverses: true)) { dim = true }
+            }
+    }
+}

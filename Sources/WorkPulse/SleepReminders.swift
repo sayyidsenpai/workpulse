@@ -7,22 +7,47 @@ private let snoozeAction = "SNOOZE"
 private let dismissAction = "DISMISS"
 private let snoozeID = "sleep-snooze"
 private let weeklyIDs = (1...7).map { "sleep-\($0)" }
+private let workEndCategory = "WORK_HOURS_ENDED"
+private let endWorkAction = "END_WORK"
+private let workEndID = "work-hours-ended"
 
 /// Sleep reminders as native, repeating local notifications. macOS keeps the schedule, so
 /// reminders fire even when WorkPulse is not running. This module only ever posts
-/// notifications: it never touches tracking, sessions or other applications.
+/// notifications: it never touches tracking, sessions or other applications. The one exception
+/// is the "End work" button of the end-of-work-hours notice, which calls `onEndWork`.
 @MainActor
 final class SleepReminders: NSObject, UNUserNotificationCenterDelegate {
     /// UserNotifications needs a real app bundle (not a bare `swift run` binary).
     let available = Bundle.main.bundleIdentifier != nil
     private var center: UNUserNotificationCenter { .current() }
+    /// The user pressed "End work" in the end-of-work-hours notification.
+    var onEndWork: (() -> Void)?
 
     func configure() {
         guard available else { return }
         center.delegate = self
         let snooze = UNNotificationAction(identifier: snoozeAction, title: "Snooze")
         let dismiss = UNNotificationAction(identifier: dismissAction, title: "Dismiss")
-        center.setNotificationCategories([UNNotificationCategory(identifier: sleepCategory, actions: [snooze, dismiss], intentIdentifiers: [])])
+        let endWork = UNNotificationAction(identifier: endWorkAction, title: "End work")
+        center.setNotificationCategories([
+            UNNotificationCategory(identifier: sleepCategory, actions: [snooze, dismiss], intentIdentifiers: []),
+            UNNotificationCategory(identifier: workEndCategory, actions: [endWork], intentIdentifiers: []),
+        ])
+    }
+
+    /// One notice when work hours end while the user still works. WorkPulse plays its own chime.
+    func workHoursEnded(at time: String) async {
+        guard available else { return }
+        let content = UNMutableNotificationContent()
+        content.title = time.isEmpty ? "Work hours ended" : "Work hours ended at \(time)"
+        content.body = "WorkPulse still counts your work."
+        content.categoryIdentifier = workEndCategory
+        try? await center.add(UNNotificationRequest(identifier: workEndID, content: content, trigger: nil))
+    }
+
+    func clearWorkHoursEnded() {
+        guard available else { return }
+        center.removeDeliveredNotifications(withIdentifiers: [workEndID])
     }
 
     func status() async -> String {
@@ -86,6 +111,10 @@ final class SleepReminders: NSObject, UNUserNotificationCenterDelegate {
 
     // Snooze re-posts the reminder later. Dismiss (and a plain click) does nothing at all.
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
+        if response.actionIdentifier == endWorkAction {
+            await MainActor.run { self.onEndWork?() }
+            return
+        }
         guard response.actionIdentifier == snoozeAction else { return }
         let original = response.notification.request.content
         let minutes = original.userInfo["snooze"] as? Int ?? 10

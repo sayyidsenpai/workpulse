@@ -171,13 +171,18 @@ final class AgentTests: XCTestCase {
         let input = #"{"session_id":"0199-ab_cd","transcript_path":"/x/y.jsonl","hook_event_name":"UserPromptSubmit","prompt":"secret text"}"#
 
         XCTAssertEqual(try runHook(["claude-code", "busy"], input: input), "", "it must print nothing: hook output can reach the agent")
-        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: agents.path), ["claude-code.0199-ab_cd"])
+        func markers() throws -> [String] {
+            try FileManager.default.contentsOfDirectory(atPath: agents.path).filter { !$0.hasPrefix(".") }.sorted()
+        }
+        XCTAssertNil(AgentSignals.lastSignal("codex", in: agents), "Codex is not connected yet")
+        XCTAssertNotNil(AgentSignals.lastSignal("claude-code", in: agents))
+        XCTAssertEqual(try markers(), ["claude-code.0199-ab_cd"])
         XCTAssertEqual(try Data(contentsOf: agents.appendingPathComponent("claude-code.0199-ab_cd")).count, 0, "the marker is empty: no prompt text is stored")
         XCTAssertEqual(AgentSignals.read(agents, quiet: 900).agent, "Claude Code")
 
         // A second session of another tool, with multi-line JSON and a hostile session id.
         _ = try runHook(["codex", "busy"], input: "{\n  \"session_id\": \"../../etc/x y\",\n  \"cwd\": \"/tmp\"\n}")
-        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: agents.path).sorted(), ["claude-code.0199-ab_cd", "codex.etcxy"],
+        XCTAssertEqual(try markers(), ["claude-code.0199-ab_cd", "codex.etcxy"],
                        "the session id cannot escape the folder")
 
         XCTAssertEqual(try runHook(["claude-code", "done"], input: input), "")
@@ -186,8 +191,10 @@ final class AgentTests: XCTestCase {
         // No usable input at all still works, as one shared marker per tool.
         _ = try runHook(["codex", "done"], input: "{\n  \"session_id\": \"../../etc/x y\"\n}")
         _ = try runHook(["codex", "busy"], input: "not json")
-        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: agents.path), ["codex.session"])
+        XCTAssertEqual(try markers(), ["codex.session"])
         _ = try runHook(["codex", "done"], input: "")
         XCTAssertNil(AgentSignals.read(agents, quiet: 900).agent)
+        XCTAssertNotNil(AgentSignals.lastSignal("claude-code", in: agents), "an agent stays connected after its turn ends")
+        XCTAssertEqual(try Data(contentsOf: agents.appendingPathComponent(".seen-codex")).count, 0)
     }
 }

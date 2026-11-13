@@ -13,7 +13,10 @@ struct WorkPulseApp: App {
             HStack(spacing: 4) {
                 Image(systemName: model.statusSymbol)
                 if let text = model.menuBarText { Text(text).monospacedDigit() }
+                // A dot when WorkPulse has a question ("Is this work?").
+                if model.suggestion != nil { Image(systemName: "circlebadge.fill") }
             }
+            .accessibilityLabel(model.menuBarLabel)
         }
         .menuBarExtraStyle(.window)
     }

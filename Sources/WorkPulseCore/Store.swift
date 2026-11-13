@@ -148,6 +148,13 @@ public final class Store {
         }
     }
 
+    /// Moves sessions recorded as non-work to work: the user confirmed that this time was work.
+    public func markAsWork(_ ids: [Int64]) throws {
+        try db.transaction {
+            for id in ids { try db.run("UPDATE sessions SET kind='work' WHERE id=? AND kind='nonwork'", [id]) }
+        }
+    }
+
     /// Sessions overlapping [from, to), oldest first. `search` matches app, note, project and category.
     public func sessions(from: Date? = nil, to: Date? = nil, search: String = "", kinds: Set<SessionKind>? = nil) throws -> [Session] {
         var sql = "SELECT \(Self.columns) FROM sessions WHERE 1=1"

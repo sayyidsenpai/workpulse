@@ -20,6 +20,89 @@ public enum MenuBarDisplay: String, Codable, CaseIterable, Sendable {
     case iconOnly, today, session
 }
 
+/// Work counts work time by the application rules. Personal counts no work time at all.
+public enum Profile: String, Codable, Sendable {
+    case work, personal
+}
+
+public enum SoundMode: String, Codable, CaseIterable, Sendable {
+    case off, goalAndHours, all
+}
+
+/// Work hours: the times at which the Work profile starts and ends by itself.
+///
+/// All arithmetic is in "local seconds": seconds since 1970 in the wall-clock time of the Mac
+/// (UTC seconds plus the UTC offset), the same convention `LocalDay` uses. A window starts on a
+/// work day at `startMinutes` and lasts `lengthMinutes`, so it can run past midnight.
+public struct WorkSchedule: Codable, Equatable, Sendable {
+    public var enabled = false
+    /// 1 = Sunday … 7 = Saturday.
+    public var days: Set<Int> = [2, 3, 4, 5, 6]
+    public var startMinutes = 8 * 60
+    public var endMinutes = 16 * 60
+
+    public init() {}
+
+    public init(enabled: Bool, days: Set<Int>, startMinutes: Int, endMinutes: Int) {
+        self.enabled = enabled; self.days = days; self.startMinutes = startMinutes; self.endMinutes = endMinutes
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        enabled = c.value(.enabled, enabled)
+        days = c.value(.days, days)
+        startMinutes = c.value(.startMinutes, startMinutes)
+        endMinutes = c.value(.endMinutes, endMinutes)
+    }
+
+    /// Start and End must differ and at least one day must be a work day.
+    public var isUsable: Bool { enabled && !days.isEmpty && lengthMinutes > 0 }
+
+    public var lengthMinutes: Int { ((endMinutes - startMinutes) % 1440 + 1440) % 1440 }
+
+    /// The window that starts on local day `day`, in local seconds; nil if that is not a work day.
+    func window(startingOn day: Int) -> (start: Double, end: Double)? {
+        guard isUsable, days.contains(LocalDay(index: day).weekday) else { return nil }
+        let start = Double(day) * 86400 + Double(startMinutes) * 60
+        return (start, start + Double(lengthMinutes) * 60)
+    }
+
+    private func windows(around t: Double, back: Int, ahead: Int) -> [(start: Double, end: Double)] {
+        let day = Int((t / 86400).rounded(.down))
+        return ((day - back)...(day + ahead)).compactMap(window(startingOn:))
+    }
+
+    public func contains(local t: Double) -> Bool {
+        windows(around: t, back: 1, ahead: 0).contains { t >= $0.start && t < $0.end }
+    }
+
+    /// The most recent start of work hours at or before `t`.
+    public func lastStart(atOrBefore t: Double) -> Double? {
+        windows(around: t, back: 7, ahead: 0).map(\.start).filter { $0 <= t }.max()
+    }
+
+    /// The most recent end of work hours at or before `t`.
+    public func lastEnd(atOrBefore t: Double) -> Double? {
+        windows(around: t, back: 8, ahead: 0).map(\.end).filter { $0 <= t }.max()
+    }
+
+    public func nextStart(after t: Double) -> Double? {
+        windows(around: t, back: 0, ahead: 7).map(\.start).filter { $0 > t }.min()
+    }
+
+    /// The end of the work hours that contain `t`.
+    public func currentEnd(local t: Double) -> Double? {
+        windows(around: t, back: 1, ahead: 0).first { t >= $0.start && t < $0.end }?.end
+    }
+
+    /// Seconds of `[a, b]` (local seconds) that are inside work hours.
+    public func overlap(localFrom a: Double, to b: Double) -> Double {
+        guard b > a else { return 0 }
+        let first = Int((a / 86400).rounded(.down)) - 1, last = Int((b / 86400).rounded(.down))
+        return (first...last).compactMap(window(startingOn:)).reduce(0) { $0 + max(0, min(b, $1.end) - max(a, $1.start)) }
+    }
+}
+
 /// A calendar day in the wall-clock time of wherever the activity was recorded.
 /// `index` counts days since 1970-01-01 in that local time, so day arithmetic is plain integer
 /// math and never depends on the time zone the Mac happens to be in when a report is viewed.
@@ -229,6 +312,19 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var countAgentWork = true
     /// Minutes without any sign of life after which a working agent is assumed to have stopped.
     public var agentQuietMinutes = 15
+    public var profile = Profile.work
+    public var schedule = WorkSchedule()
+    /// Tell the user once when work hours end while they still work.
+    public var notifyWorkEnd = true
+    /// After work hours, the Work profile ends after this many minutes without input.
+    public var returnIdleMinutes = 15
+    public var sounds = SoundMode.goalAndHours
+    public var onboarded = false
+    /// The last work-hours boundaries (local seconds) that were already acted on, so each acts once.
+    public var lastStartApplied: Double = 0
+    public var lastEndApplied: Double = 0
+    /// Local day on which the user answered "Not work"; no suggestion is shown again that day.
+    public var suggestionMutedDay: Int?
 
     public init() {}
 
@@ -246,6 +342,15 @@ public struct AppSettings: Codable, Equatable, Sendable {
         lastBackupDay = c.value(.lastBackupDay, lastBackupDay)
         countAgentWork = c.value(.countAgentWork, countAgentWork)
         agentQuietMinutes = c.value(.agentQuietMinutes, agentQuietMinutes)
+        profile = c.value(.profile, profile)
+        schedule = c.value(.schedule, schedule)
+        notifyWorkEnd = c.value(.notifyWorkEnd, notifyWorkEnd)
+        returnIdleMinutes = c.value(.returnIdleMinutes, returnIdleMinutes)
+        sounds = c.value(.sounds, sounds)
+        onboarded = c.value(.onboarded, onboarded)
+        lastStartApplied = c.value(.lastStartApplied, lastStartApplied)
+        lastEndApplied = c.value(.lastEndApplied, lastEndApplied)
+        suggestionMutedDay = c.value(.suggestionMutedDay, suggestionMutedDay)
     }
 }
 

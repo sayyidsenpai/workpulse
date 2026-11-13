@@ -3,11 +3,11 @@ import SwiftUI
 import UniformTypeIdentifiers
 import WorkPulseCore
 
-/// Application rules (category, idle behaviour, project), plus the categories and projects themselves.
+/// The "Apps" screen: the category and the idle time of each application, and the categories.
 struct RulesView: View {
     @Environment(AppModel.self) private var model
 
-    private struct AppRow: Identifiable {
+    private struct AppRow: Identifiable, Equatable {
         let id: String  // bundle identifier
         let name: String
     }
@@ -15,32 +15,44 @@ struct RulesView: View {
     @State private var apps: [AppRow] = []
     @State private var newCategory = ""
     @State private var newCategoryKind = SessionKind.work
-    @State private var newProject = ""
+    @State private var deleting: WorkCategory?
+
+    private static let categoryWidth: CGFloat = 136
+    private static let idleWidth: CGFloat = 118
+    /// Idle times a user can choose, in seconds.
+    private static let idleChoices = [300, 600, 900, 1800]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Each application has a category, and the category decides whether its time counts as work. Applications in “Ignored” are excluded: only the duration is kept, never which app it was. Changes apply from now on and never rewrite recorded history.")
-                .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            Toggle("Count applications without a rule as work", isOn: model.binding(\.unclassifiedIsWork))
-            Label("Browsers are never counted as work automatically. WorkPulse does not read tabs, sites or URLs, so a browser's category applies to all browsing. Give the browser a category yourself, or leave it uncategorized and use a manual session (Hybrid mode) for browser-based work.", systemImage: "globe")
-                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-
-            table
-
-            HStack {
-                Button("Add Application…", action: addApplication)
-                Spacer()
-                Text("Idle override: how long without input before this app's time stops counting.")
-                    .font(.caption).foregroundStyle(.secondary)
+        Screen {
+            ScreenHeader(title: "Apps", subtitle: "Each application has a category. In the Work profile, the category sets if its time counts as work. Changes apply from now on. Recorded history does not change.") {
+                Button(action: addApplication) { Label("Add Application…", systemImage: "plus") }
+                    .buttonStyle(WPButtonStyle(kind: .primary))
             }
-
-            HStack(alignment: .top, spacing: 12) {
-                GroupBox { categories.padding(6) }
-                GroupBox { projects.padding(6) }
+            Note(text: "Browsers do not count as work automatically. WorkPulse does not read tabs, sites, or URLs. Give the browser a category. Its time counts only in the Work profile.")
+                .wpRise(1)
+            // Side by side when there is room, one below the other in a narrow window.
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .top, spacing: 16) {
+                    applications.frame(minWidth: 480, idealWidth: 480, maxWidth: .infinity)
+                    categories.frame(width: 320)
+                }
+                VStack(spacing: 16) { applications; categories }
             }
+            .wpRise(2)
         }
         .onChange(of: model.revision, initial: true) { loadApps() }
+        .confirmationDialog("Delete the category “\(deleting?.name ?? "")”?",
+                            isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }),
+                            presenting: deleting) { category in
+            Button("Delete Category", role: .destructive) { model.edit { try model.store.deleteCategory(category.id) } }
+        } message: { _ in
+            Text("Its applications become Uncategorized.")
+        }
     }
+
+    private var line: some View { Rectangle().fill(WP.hairline).frame(height: 1) }
+
+    // MARK: Applications
 
     private func loadApps() {
         var names: [String: String] = [:]
@@ -49,8 +61,9 @@ struct RulesView: View {
         }
         for app in (try? model.store.knownApps()) ?? [] where names[app.bundleID] == nil { names[app.bundleID] = app.name }
         for rule in model.rules where names[rule.bundleID] == nil { names[rule.bundleID] = rule.appName }
-        apps = names.map { AppRow(id: $0.key, name: $0.value) }
+        let rows = names.map { AppRow(id: $0.key, name: $0.value) }
             .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        if rows != apps { apps = rows }
     }
 
     private func bind<T>(_ row: AppRow, _ keyPath: WritableKeyPath<AppRule, T>) -> Binding<T> {
@@ -58,125 +71,213 @@ struct RulesView: View {
                 set: { value in
                     var rule = model.rule(for: row.id) ?? AppRule(bundleID: row.id, appName: row.name)
                     rule[keyPath: keyPath] = value
+                    rule.projectID = nil   // projects are gone from the interface
                     model.setRule(rule)
                 })
     }
 
-    private var table: some View {
-        Table(apps) {
-            TableColumn("Application") { row in
-                HStack(spacing: 6) {
-                    Text(row.name)
-                    if Browsers.isBrowser(row.id) {
-                        Text("Browser").font(.caption2).padding(.horizontal, 5).padding(.vertical, 1)
-                            .background(.quaternary, in: Capsule())
-                    }
+    private var unclassifiedSwitch: some View {
+        Toggle("Count applications without a rule as work", isOn: model.binding(\.unclassifiedIsWork))
+            .toggleStyle(WPSwitchStyle())
+    }
+
+    // ponytail: every row is built at once (two menus each); use a lazy stack if lists pass a few hundred applications.
+    private var applications: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 12) {
+                    SectionTitle("Applications")
+                    Spacer(minLength: 12)
+                    unclassifiedSwitch.fixedSize()
+                }
+                VStack(alignment: .leading, spacing: 10) {
+                    SectionTitle("Applications")
+                    unclassifiedSwitch
                 }
             }
-            TableColumn("Category") { row in
-                Picker("Category", selection: bind(row, \.categoryID)) {
-                    ForEach(model.categories) { Text($0.name).tag($0.id) }
+            .padding(.horizontal, 16).padding(.vertical, 14)
+            if apps.isEmpty {
+                Text("WorkPulse found no applications. To add one, click Add Application….")
+                    .font(WP.font(13)).foregroundStyle(WP.secondary).fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 16).padding(.vertical, 12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .overlay(alignment: .top) { line }
+            } else {
+                HStack(spacing: 8) {
+                    Text("Application").frame(maxWidth: .infinity, alignment: .leading)
+                    Text("Category").frame(width: Self.categoryWidth, alignment: .leading)
+                    Text("Idle override").frame(width: Self.idleWidth, alignment: .leading)
                 }
-                .labelsHidden()
+                .font(WP.font(12, .medium)).foregroundStyle(WP.caption)
+                .padding(.horizontal, 16).padding(.vertical, 8)
+                .overlay(alignment: .top) { line }
+                ForEach(apps) { appRow($0) }
             }
-            .width(min: 130, ideal: 150)
-            TableColumn("Idle override") { row in
-                Picker("Idle override", selection: bind(row, \.idleThreshold)) {
-                    Text("Default").tag(Int?.none)
-                    ForEach([60, 300, 600, 1800, 3600], id: \.self) { Text("\($0 / 60) min").tag(Int?.some($0)) }
-                    Text("Never idle").tag(Int?.some(0))
-                }
-                .labelsHidden()
-            }
-            .width(min: 110, ideal: 120)
-            TableColumn("Project") { row in
-                Picker("Project", selection: bind(row, \.projectID)) {
-                    Text("Active project").tag(Int64?.none)
-                    ForEach(model.projects) { Text($0.name).tag(Int64?.some($0.id)) }
-                }
-                .labelsHidden()
-            }
-            .width(min: 130, ideal: 150)
+            Text("Idle override: the time without input before the time of this application stops counting.")
+                .font(WP.font(12)).foregroundStyle(WP.caption).fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 16).padding(.vertical, 10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .overlay(alignment: .top) { line }
         }
-        .frame(minHeight: 180)
+        .wpCard(padding: 0, strong: true)
+    }
+
+    private func appRow(_ row: AppRow) -> some View {
+        // An idle time that an earlier version stored stays in the menu.
+        let stored = model.rule(for: row.id)?.idleThreshold ?? 0
+        let idle = (Self.idleChoices + (stored > 0 && !Self.idleChoices.contains(stored) ? [stored] : [])).sorted()
+        return HStack(spacing: 8) {
+            HStack(spacing: 10) {
+                AppTile(name: row.name, bundleID: row.id, size: 28)
+                Text(row.name).font(WP.font(13, .semibold)).foregroundStyle(WP.ink).lineLimit(1)
+                if Browsers.isBrowser(row.id) {
+                    Text("Browser").font(WP.font(11, .semibold)).foregroundStyle(WP.secondary)
+                        .padding(.horizontal, 8).padding(.vertical, 1)
+                        .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(WP.border))
+                        .fixedSize()
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            Picker("Category for \(row.name)", selection: bind(row, \.categoryID)) {
+                ForEach(model.categories) { Text($0.name).tag($0.id) }
+            }
+            .labelsHidden().frame(width: Self.categoryWidth)
+            Picker("Idle override for \(row.name)", selection: bind(row, \.idleThreshold)) {
+                Text("Default").tag(Int?.none)
+                ForEach(idle, id: \.self) { Text("\($0 / 60) min").tag(Int?.some($0)) }
+                Text("Never idle").tag(Int?.some(0))
+            }
+            .labelsHidden().frame(width: Self.idleWidth)
+        }
+        .padding(.horizontal, 16).padding(.vertical, 8)
+        .overlay(alignment: .top) { line }
     }
 
     private func addApplication() {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.application]
         panel.directoryURL = URL(fileURLWithPath: "/Applications")
-        panel.message = "Choose an application to create a rule for"
-        guard panel.runModal() == .OK, let url = panel.url, let id = Bundle(url: url)?.bundleIdentifier else { return }
+        panel.message = "Choose an application to add."
+        // An application that has a rule keeps it.
+        guard panel.runModal() == .OK, let url = panel.url, let id = Bundle(url: url)?.bundleIdentifier,
+              model.rule(for: id) == nil else { return }
         let name = FileManager.default.displayName(atPath: url.path).replacingOccurrences(of: ".app", with: "")
-        model.setRule(AppRule(bundleID: id, appName: name, categoryID: Store.workID))
+        // A browser is never set to Work automatically: the user chooses its category.
+        model.setRule(AppRule(bundleID: id, appName: name, categoryID: Browsers.isBrowser(id) ? Store.nonworkID : Store.workID))
     }
+
+    // MARK: Categories
 
     private var categories: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Categories").font(.headline)
-            ForEach(model.categories) { category in
-                HStack {
-                    Text(category.name)
-                    Spacer()
-                    if category.builtin {
-                        Text(Fmt.kind(category.kind)).foregroundStyle(.secondary)
-                    } else {
-                        Picker("Counts as", selection: Binding(get: { category.kind }, set: { kind in
-                            var changed = category
-                            changed.kind = kind
-                            model.edit { try model.store.saveCategory(changed) }
-                        })) {
-                            Text("Work").tag(SessionKind.work)
-                            Text("Non-work").tag(SessionKind.nonwork)
-                        }
-                        .labelsHidden().fixedSize()
-                        Button { model.edit { try model.store.deleteCategory(category.id) } } label: { Image(systemName: "trash") }
-                            .buttonStyle(.borderless).help("Delete category; its apps become Uncategorized")
-                    }
+        VStack(alignment: .leading, spacing: 12) {
+            SectionTitle("Categories")
+            VStack(spacing: 0) {
+                ForEach(model.categories) { category in
+                    categoryRow(category)
+                        .overlay(alignment: .top) { if category.id != model.categories.first?.id { line } }
                 }
             }
-            HStack {
-                TextField("New category", text: $newCategory).textFieldStyle(.roundedBorder)
-                Picker("Counts as", selection: $newCategoryKind) {
-                    Text("Work").tag(SessionKind.work)
-                    Text("Non-work").tag(SessionKind.nonwork)
-                }
-                .labelsHidden().fixedSize()
-                Button("Add") {
-                    let name = newCategory.trimmingCharacters(in: .whitespaces)
-                    model.edit { try model.store.saveCategory(WorkCategory(name: name, kind: newCategoryKind)) }
-                    newCategory = ""
-                }
-                .disabled(newCategory.trimmingCharacters(in: .whitespaces).isEmpty)
-            }
+            newCategoryRow
+                .padding(.top, 12)
+                .overlay(alignment: .top) { line }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .wpCard(strong: true)
     }
 
-    private var projects: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Projects / work profiles").font(.headline)
-            if model.projects.isEmpty {
-                Text("Optional. A project groups work time and can have its own goals.").font(.caption).foregroundStyle(.secondary)
-            }
-            ForEach(model.projects) { project in
-                HStack {
-                    Text(project.name)
-                    Spacer()
-                    Button { model.deleteProject(project.id) } label: { Image(systemName: "trash") }
-                        .buttonStyle(.borderless).help("Delete project; its sessions are kept without a project")
+    private func categoryRow(_ category: WorkCategory) -> some View {
+        HStack(spacing: 8) {
+            swatch(category)
+            Text(category.name).font(WP.font(13, .semibold)).foregroundStyle(WP.ink).lineLimit(1)
+                .layoutPriority(category.builtin ? 1 : 0)
+            Spacer(minLength: 4)
+            if category.builtin {
+                // The kind of a built-in category is fixed, so it is text and not a menu.
+                Text(meaning(category)).font(WP.font(13)).foregroundStyle(WP.secondary)
+                    .multilineTextAlignment(.trailing).fixedSize(horizontal: false, vertical: true)
+            } else {
+                kindPicker("\(category.name) counts as", Binding(get: { category.kind }, set: { kind in
+                    var changed = category
+                    changed.kind = kind
+                    model.edit { try model.store.saveCategory(changed) }
+                }))
+                .frame(width: 116)
+                Button { deleting = category } label: {
+                    Image(systemName: "trash").font(WP.font(13, .medium)).foregroundStyle(WP.red)
+                        .frame(width: 28, height: 28).contentShape(Rectangle())
                 }
-            }
-            HStack {
-                TextField("New project", text: $newProject).textFieldStyle(.roundedBorder)
-                Button("Add") {
-                    let name = newProject.trimmingCharacters(in: .whitespaces)
-                    model.edit { try model.store.saveProject(Project(name: name)) }
-                    newProject = ""
-                }
-                .disabled(newProject.trimmingCharacters(in: .whitespaces).isEmpty)
+                .buttonStyle(.plain)
+                .accessibilityLabel("Delete the category \(category.name)")
+                .help("Delete this category. Its applications become Uncategorized.")
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, 8)
+    }
+
+    /// Cobalt for work, grey for non-work, an outline for Ignored. The text beside it says the same.
+    private func swatch(_ category: WorkCategory) -> some View {
+        let shape = RoundedRectangle(cornerRadius: 3, style: .continuous)
+        let work = category.kind == .work || (category.id == Store.uncategorizedID && model.settings.unclassifiedIsWork)
+        return Group {
+            if category.kind == .excluded {
+                shape.strokeBorder(WP.caption, lineWidth: 1.5)
+            } else {
+                shape.fill(work ? WP.cobalt : WP.switchOff)
+            }
+        }
+        .frame(width: 10, height: 10)
+        .accessibilityHidden(true)
+    }
+
+    private func meaning(_ category: WorkCategory) -> String {
+        switch category.id {
+        case Store.ignoredID: "Excluded. WorkPulse records only the duration."
+        case Store.uncategorizedID: "Applications without a rule."
+        default: category.kind == .work ? "Counts as work." : "Counts as non-work."
+        }
+    }
+
+    private func kindPicker(_ label: String, _ selection: Binding<SessionKind>) -> some View {
+        Picker(label, selection: selection) {
+            Text("Work").tag(SessionKind.work)
+            Text("Non-work").tag(SessionKind.nonwork)
+        }
+        .labelsHidden()
+    }
+
+    private var newName: String { newCategory.trimmingCharacters(in: .whitespaces) }
+    private var nameTaken: Bool { model.categories.contains { $0.name.caseInsensitiveCompare(newName) == .orderedSame } }
+
+    private var newCategoryRow: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .bottom, spacing: 8) {
+                VStack(alignment: .leading, spacing: 4) {
+                    FieldLabel("New category")
+                    TextField("New category", text: $newCategory, prompt: Text("Name"))
+                        .textFieldStyle(.plain).font(WP.font(13)).foregroundStyle(WP.ink)
+                        .wpField()
+                        .onChange(of: newCategory) { if newCategory.count > 40 { newCategory = String(newCategory.prefix(40)) } }
+                        .onSubmit(addCategory)
+                }
+                VStack(alignment: .leading, spacing: 4) {
+                    FieldLabel("Counts as")
+                    kindPicker("New category counts as", $newCategoryKind).frame(width: 116, height: 32)
+                }
+                Button("Add", action: addCategory)
+                    .buttonStyle(WPButtonStyle())
+                    .disabled(newName.isEmpty || nameTaken)
+            }
+            if nameTaken {
+                Text("A category with this name exists. Use a different name.")
+                    .font(WP.font(12)).foregroundStyle(WP.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private func addCategory() {
+        guard !newName.isEmpty, !nameTaken else { return }
+        let category = WorkCategory(name: newName, kind: newCategoryKind)
+        model.edit { try model.store.saveCategory(category) }
+        newCategory = ""
     }
 }

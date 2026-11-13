@@ -8,7 +8,7 @@ import WorkPulseCore
 private let applog = Logger(subsystem: "com.workpulse.app", category: "app")
 
 enum MainTab: String, CaseIterable, Identifiable {
-    case history = "History", reports = "Reports", goals = "Goals", rules = "Apps", sleep = "Sleep", settings = "Settings"
+    case history = "History", reports = "Reports", work = "Work", rules = "Apps", sleep = "Sleep", settings = "Settings"
 
     var id: String { rawValue }
 
@@ -16,7 +16,7 @@ enum MainTab: String, CaseIterable, Identifiable {
         switch self {
         case .history: "list.bullet.rectangle"
         case .reports: "chart.bar"
-        case .goals: "target"
+        case .work: "briefcase"
         case .rules: "square.grid.2x2"
         case .sleep: "moon"
         case .settings: "gearshape"
@@ -31,6 +31,31 @@ struct Summary {
     var day: PeriodResult?
     var week: PeriodResult?
     var month: PeriodResult?
+    /// Today's work time outside the work hours.
+    var overtime: TimeInterval = 0
+    /// Today's work time that an AI agent did.
+    var agent: TimeInterval = 0
+    /// This week's work days (and any other day with work), in order, and whether each was worked.
+    var weekDays: [(day: LocalDay, worked: Bool)] = []
+    /// Number of work days in a week.
+    var weekDaysTarget = 0
+}
+
+/// An AI coding agent WorkPulse can detect, and whether its hook has ever reported.
+struct AgentInfo: Identifiable, Equatable {
+    let tool: String
+    let name: String
+    var lastSignal: Date?
+    /// The WorkPulse hook entries are in the agent's configuration file.
+    var hookInstalled: Bool
+    var id: String { tool }
+    var connected: Bool { lastSignal != nil }
+}
+
+/// "You used Xcode for 12 minutes. Is this work?": shown in Personal, only with evidence.
+struct Suggestion: Equatable {
+    var app: String
+    var minutes: Int
 }
 
 /// Glue between the core (store + engine) and the views. All derived numbers come from the
@@ -44,6 +69,9 @@ final class AppModel {
     @ObservationIgnored let reminders = SleepReminders()
     @ObservationIgnored private var monitor: ActivityMonitor?
     @ObservationIgnored private var mainWindow: NSWindow?
+    @ObservationIgnored private var onboardingWindow: NSWindow?
+    /// nil until the first refresh, so a goal that was reached before launch makes no sound.
+    @ObservationIgnored private var goalWasReached: Bool?
     @ObservationIgnored private var lastRefresh = Date.distantPast
     @ObservationIgnored private var rescheduling: Task<Void, Never>?
 
@@ -56,7 +84,6 @@ final class AppModel {
     var revision = 0
     var banner: String?
     var categories: [WorkCategory] = []
-    var projects: [Project] = []
     var rules: [AppRule] = []
     var goals: [GoalConfig] = []
     var pay: [Compensation] = []
@@ -64,6 +91,17 @@ final class AppModel {
     var launchAtLogin = false
     var loginItemNote: String?
     var notificationStatus = "…"
+    var isOvertime = false
+    var agentWorking = false
+    var suggestion: Suggestion?
+    var agents: [AgentInfo] = []
+    var pausedAt: Date?
+    var workHoursEnd: Date?
+    var lastWorkHoursEnd: Date?
+    var nextWorkHoursStart: Date?
+
+    /// Minutes in work applications, in Personal, before WorkPulse asks "Is this work?".
+    static let suggestionMinutes = 12
 
     private init() {
         let override = ProcessInfo.processInfo.environment["WORKPULSE_DATA_DIR"]
@@ -90,18 +128,31 @@ final class AppModel {
         engine.recover()
         engine.onChange = { [weak self] in self?.refresh() }
         engine.onError = { [weak self] error in self?.banner = "Storage error: \(error.localizedDescription)" }
+        engine.onWorkHoursEnded = { [weak self] in self?.workHoursEnded() }
+        reminders.onEndWork = { [weak self] in self?.endWork() }
         reloadReference()
         let monitor = ActivityMonitor(engine: engine)
         monitor.onTick = { [weak self] in self?.tick() }
         monitor.agentsDirectory = store.directory?.appendingPathComponent("agents")
         installAgentHook()
         self.monitor = monitor
+        #if DEBUG
+        if Self.demo {
+            // Pictures for the documentation: a fixed front application instead of the real one.
+            engine.appActivated(.init(bundleID: "com.apple.dt.Xcode", name: "Xcode"))
+            engine.tick(idleSeconds: 0)
+        } else {
+            monitor.start()
+        }
+        #else
         monitor.start()
+        #endif
         refresh()
         reminders.configure()
         rescheduleReminders(requestPermission: false)
         refreshLoginItem()
         dailyBackup()
+        if !settings.onboarded && !CommandLine.arguments.contains("--snapshot") { showOnboarding() }
         applog.notice("WorkPulse started; data at \(self.store.directory?.path ?? "memory", privacy: .public)")
     }
 
@@ -149,11 +200,36 @@ final class AppModel {
         let today = LocalDay.today()
         let week = Period.week.range(containing: today, firstWeekday: settings.firstWeekday)
         let month = Period.month.range(containing: today, firstWeekday: settings.firstWeekday)
-        let totals = self.totals(days: min(week.lowerBound, month.lowerBound)...max(week.upperBound, month.upperBound))
+        var sessions: [Session] = []
+        attempt { sessions = try store.sessions(days: min(week.lowerBound, month.lowerBound)...max(week.upperBound, month.upperBound)) }
+        let totals = Aggregator.dayTotals(sessions)
         summary = Summary(asOf: Date(), today: totals[today] ?? DayTotals(),
-                          day: evaluate(.day, totals), week: evaluate(.week, totals), month: evaluate(.month, totals))
+                          day: evaluate(.day, totals), week: evaluate(.week, totals), month: evaluate(.month, totals),
+                          overtime: Aggregator.overtime(sessions, on: today, schedule: settings.schedule),
+                          agent: Aggregator.dayTotals(sessions) { $0.source == .agent && $0.kind == .work }[today]?.work ?? 0)
+        let scheduled = Goals.config(on: today, projectID: nil, in: goals)?.workingDays ?? settings.schedule.days
+        summary.weekDays = week.days.compactMap { day in
+            let worked = Goals.isWorkingDay(totals[day]?.work ?? 0, on: day, configs: goals)
+            return scheduled.contains(day.weekday) || worked ? (day: day, worked: worked) : nil
+        }
+        summary.weekDaysTarget = scheduled.count
+        isOvertime = engine.isOvertime
+        agentWorking = engine.agentWorking
+        workHoursEnd = engine.workHoursEnd
+        lastWorkHoursEnd = engine.lastWorkHoursEnd
+        nextWorkHoursStart = engine.nextWorkHoursStart
+        if status != .paused { pausedAt = nil }
+        let evidence = Int(engine.evidenceSeconds / 60)
+        suggestion = status == .personal && evidence >= Self.suggestionMinutes && settings.suggestionMutedDay != today.index
+            ? Suggestion(app: engine.evidenceApp ?? "a work application", minutes: evidence) : nil
+        refreshAgents()
+        let reached = summary.day?.targetSeconds.map { $0 > 0 && summary.today.work >= $0 } ?? false
+        if goalWasReached == false && reached { Sounds.play(.goal, mode: settings.sounds) }
+        goalWasReached = reached
         revision += 1
     }
+
+    var goalReached: Bool { goalWasReached ?? false }
 
     /// Per-day totals for a range of local days, optionally for one profile only.
     func totals(days: ClosedRange<LocalDay>, projectID: Int64? = nil) -> [LocalDay: DayTotals] {
@@ -169,56 +245,169 @@ final class AppModel {
 
     var isWorking: Bool { status == .tracking(.work) }
 
+    /// Menu bar icon: one shape per state, so the state never depends on colour.
     var statusSymbol: String {
         switch status {
-        case .tracking(.work): "stopwatch.fill"
+        case .tracking(.work):
+            isOvertime ? "clock" : agentWorking ? "terminal" : goalReached ? "checkmark.circle" : "stopwatch.fill"
+        case .tracking(.idle), .idle: "moon"
         case .tracking, .waiting: "stopwatch"
-        case .idle: "zzz"
         case .paused: "pause.circle"
-        case .stopped: "stop.circle"
+        case .personal, .stopped: "person.crop.circle"
         }
     }
 
     var statusText: String {
         switch status {
         case .tracking(.work):
-            if engine.agentWorking { "\(engine.agent ?? "Agent") working" }
-            else if engine.manualActive { "Manual work session" }
+            if agentWorking { "\(engine.agent ?? "Agent") working" }
+            else if isOvertime { "Overtime" }
             else { "Tracking work" }
         case .tracking(.nonwork): "Active · non-work"
-        case .tracking(.excluded): "Excluded app"
+        case .tracking(.excluded): "Ignored application"
         case .tracking(.idle), .idle: "Idle · auto-paused"
         case .waiting: "Waiting for activity"
         case .paused: "Paused"
-        case .stopped: settings.mode == .manual ? "No session running" : "Tracking stopped"
-        }
-    }
-
-    var statusColor: Color {
-        switch status {
-        case .tracking(.work): .green
-        case .tracking(.nonwork), .tracking(.excluded), .waiting: .blue
-        case .tracking(.idle), .idle, .paused: .orange
-        case .stopped: .secondary
+        case .personal, .stopped: "Personal"
         }
     }
 
     /// Menu bar text; refreshed with the summary (at least every 30 s), shown to the minute.
     var menuBarText: String? {
-        switch settings.menuBarDisplay {
-        case .iconOnly: nil
-        case .today: Fmt.duration(summary.today.work, seconds: false)
-        case .session: sessionStart.map { Fmt.duration(summary.asOf.timeIntervalSince($0), seconds: false) }
+        let prefix = switch status {
+        case .personal, .stopped: "Personal · "
+        case .paused: "Paused · "
+        case .idle, .tracking(.idle): "Idle · "
+        case .tracking(.work) where isOvertime: "Overtime · "
+        default: ""
         }
+        switch settings.menuBarDisplay {
+        case .iconOnly: return nil
+        case .today: return prefix + Fmt.duration(summary.today.work, seconds: false)
+        case .session: return sessionStart.map { Fmt.duration(summary.asOf.timeIntervalSince($0), seconds: false) }
+        }
+    }
+
+    /// What VoiceOver reads for the menu bar item.
+    var menuBarLabel: String {
+        "WorkPulse. \(statusText). Today \(Fmt.duration(summary.today.work, seconds: false))." + (suggestion == nil ? "" : " One suggestion.")
+    }
+
+    // MARK: - Work and Personal
+
+    /// "Start overtime" outside work hours, "Start work" otherwise.
+    var startLabel: String { settings.schedule.isUsable && !engine.inWorkHours ? "Start overtime" : "Start work" }
+
+    func startWork(includeEvidence: Bool = false) {
+        engine.startWork(includeEvidence: includeEvidence)
+        Sounds.play(.up, mode: settings.sounds)
+    }
+
+    func endWork() {
+        guard settings.profile == .work else { return }
+        engine.endWork()
+        reminders.clearWorkHoursEnded()
+        Sounds.play(.down, mode: settings.sounds)
+    }
+
+    func pause() {
+        engine.pause()
+        pausedAt = Date()
+        Sounds.play(.down, mode: settings.sounds)
+    }
+
+    func resume() {
+        engine.resume()
+        Sounds.play(.up, mode: settings.sounds)
+    }
+
+    /// The answer "Not work": no more suggestions today.
+    func notWork() {
+        engine.clearEvidence()
+        updateSettings { $0.suggestionMutedDay = LocalDay.today().index }
+    }
+
+    /// Work hours ended while the user still works: say it once, then leave the user alone.
+    private func workHoursEnded() {
+        Sounds.play(.hoursEnded, mode: settings.sounds)
+        guard settings.notifyWorkEnd else { return }
+        let end = engine.lastWorkHoursEnd.map(Fmt.time) ?? ""
+        Task { await reminders.workHoursEnded(at: end) }
+    }
+
+    /// The daily goal in force today, in minutes.
+    var dailyGoalMinutes: Int? {
+        Goals.config(on: .today(), projectID: nil, in: goals)?.dailyHours.map { Int(($0 * 60).rounded()) }
+    }
+
+    /// Saves the work hours and the daily goal. The goal applies from today; the weekly and
+    /// monthly goals follow from it and the work days.
+    func saveWork(schedule: WorkSchedule, goalMinutes: Int) {
+        let turnedOn = schedule.isUsable && !settings.schedule.isUsable
+        if schedule != settings.schedule { updateSettings { $0.schedule = schedule } }
+        var goal = Goals.config(on: .today(), projectID: nil, in: goals) ?? GoalConfig(effectiveFrom: .today())
+        let before = goal
+        goal.dailyHours = Double(goalMinutes) / 60
+        goal.weeklyHours = nil
+        goal.monthlyHours = nil
+        goal.weeklyDays = nil
+        goal.minDayMinutes = 30
+        goal.workingDays = schedule.days
+        if goal != before {
+            goal.id = 0
+            goal.effectiveFrom = .today()
+            edit { try store.saveGoal(goal) }
+        }
+        if turnedOn { rescheduleReminders(requestPermission: true) }   // the end-of-hours notice needs permission
+    }
+
+    // MARK: - AI agents
+
+    private var agentsDirectory: URL? { store.directory?.appendingPathComponent("agents") }
+
+    /// The home folder that holds the agents' configuration (overridable for tests and snapshots).
+    private var home: URL {
+        ProcessInfo.processInfo.environment["WORKPULSE_HOME"].map { URL(fileURLWithPath: $0, isDirectory: true) }
+            ?? FileManager.default.homeDirectoryForCurrentUser
+    }
+
+    var agentConnected: Bool { agents.contains { $0.connected } }
+
+    private func refreshAgents() {
+        let found = AgentSignals.tools.map { tool in
+            AgentInfo(tool: tool, name: AgentSignals.name(tool),
+                      lastSignal: agentsDirectory.flatMap { AgentSignals.lastSignal(tool, in: $0) },
+                      hookInstalled: AgentSetup.isInstalled(tool, home: home))
+        }
+        if found != agents { agents = found }
+    }
+
+    func agentConfigPath(_ tool: String) -> String {
+        (AgentSetup.configURL(tool, home: home).path as NSString).abbreviatingWithTildeInPath
+    }
+
+    func agentBackupPath(_ tool: String) -> String? {
+        let url = AgentSetup.backupURL(tool, home: home)
+        return FileManager.default.fileExists(atPath: url.path) ? (url.path as NSString).abbreviatingWithTildeInPath : nil
+    }
+
+    /// Adds the WorkPulse hook to the agent's configuration. Returns false (with a banner) on failure.
+    @discardableResult
+    func installAgentHooks(_ tool: String) -> Bool {
+        var done = false
+        attempt { try AgentSetup.install(tool, home: home); done = true }
+        refreshAgents()
+        return done
+    }
+
+    func undoAgentHooks(_ tool: String) {
+        attempt { try AgentSetup.undo(tool, home: home) }
+        refreshAgents()
     }
 
     func categoryName(_ s: Session) -> String {
         if s.kind == .idle { return "Idle" }
         return categories.first { $0.id == s.categoryID }?.name ?? Fmt.kind(s.kind)
-    }
-
-    func projectName(_ id: Int64?) -> String {
-        projects.first { $0.id == id }?.name ?? "No project"
     }
 
     // MARK: - Settings and reference data
@@ -234,7 +423,6 @@ final class AppModel {
     func reloadReference() {
         attempt {
             categories = try store.categories()
-            projects = try store.projects()
             rules = try store.rules()
             goals = try store.goalConfigs()
             pay = try store.compensation()
@@ -261,11 +449,6 @@ final class AppModel {
         }
     }
 
-    func deleteProject(_ id: Int64) {
-        if settings.activeProjectID == id { updateSettings { $0.activeProjectID = nil } }
-        edit { try store.deleteProject(id) }
-    }
-
     // MARK: - Sessions
 
     @discardableResult
@@ -288,17 +471,51 @@ final class AppModel {
     func showMain(_ tab: MainTab) {
         self.tab = tab
         if mainWindow == nil {
-            let window = NSWindow(contentViewController: NSHostingController(rootView: MainView().environment(self)))
-            window.title = "WorkPulse"
-            window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
-            window.setContentSize(NSSize(width: 940, height: 680))
-            window.isReleasedWhenClosed = false
-            window.center()
-            window.setFrameAutosaveName("WorkPulseMain")
+            let window = glassWindow(MainView().environment(self), size: NSSize(width: 1080, height: 720), resizable: true)
+            window.setFrameAutosaveName("WorkPulseMain2")
             mainWindow = window
         }
         NSApp.activate(ignoringOtherApps: true)
         mainWindow?.makeKeyAndOrderFront(nil)
+    }
+
+    /// A window whose content runs under a transparent title bar, so the glass reaches the top edge.
+    private func glassWindow(_ view: some View, size: NSSize, resizable: Bool) -> NSWindow {
+        let window = NSWindow(contentViewController: NSHostingController(rootView: view))
+        window.title = "WorkPulse"
+        window.styleMask = resizable ? [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
+                                     : [.titled, .closable, .fullSizeContentView]
+        window.titlebarAppearsTransparent = true
+        window.titleVisibility = .hidden
+        window.isMovableByWindowBackground = true
+        window.setContentSize(size)
+        window.isReleasedWhenClosed = false
+        window.center()
+        return window
+    }
+
+    // MARK: - Onboarding
+
+    func showOnboarding() {
+        if onboardingWindow == nil {
+            onboardingWindow = glassWindow(OnboardingView().environment(self), size: NSSize(width: 760, height: 640), resizable: false)
+        }
+        NSApp.activate(ignoringOtherApps: true)
+        onboardingWindow?.makeKeyAndOrderFront(nil)
+    }
+
+    /// Stores the answers from onboarding. Nothing is tracked differently until this point.
+    func finishOnboarding(schedule: WorkSchedule, goalMinutes: Int, workApps: [(bundleID: String, name: String)], launchAtLogin: Bool) {
+        for app in workApps {
+            var rule = self.rule(for: app.bundleID) ?? AppRule(bundleID: app.bundleID, appName: app.name)
+            rule.categoryID = Store.workID
+            setRule(rule)
+        }
+        saveWork(schedule: schedule, goalMinutes: goalMinutes)
+        if launchAtLogin != self.launchAtLogin { setLaunchAtLogin(launchAtLogin) }
+        updateSettings { $0.onboarded = true }
+        onboardingWindow?.close()
+        onboardingWindow = nil
     }
 
     func export(_ text: String, name: String) {
@@ -460,44 +677,5 @@ struct BannerView: View {
         }
         .padding(8)
         .background(.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
-    }
-}
-
-struct WeekdayPicker: View {
-    @Binding var days: Set<Int>
-    let firstWeekday: Int
-
-    var body: some View {
-        HStack(spacing: 4) {
-            ForEach((0..<7).map { (firstWeekday - 1 + $0) % 7 + 1 }, id: \.self) { day in
-                Toggle(Calendar.current.shortWeekdaySymbols[day - 1], isOn: Binding(
-                    get: { days.contains(day) },
-                    set: { on in if on { days.insert(day) } else { days.remove(day) } }))
-                    .toggleStyle(.button)
-            }
-        }
-    }
-}
-
-struct MainView: View {
-    @Environment(AppModel.self) private var model
-
-    var body: some View {
-        @Bindable var model = model
-        VStack(spacing: 0) {
-            if let banner = model.banner {
-                BannerView(text: banner) { model.banner = nil }.padding([.horizontal, .top], 12)
-            }
-            TabView(selection: $model.tab) {
-                HistoryView().tabItem { Label("History", systemImage: MainTab.history.symbol) }.tag(MainTab.history)
-                ReportsView().tabItem { Label("Reports", systemImage: MainTab.reports.symbol) }.tag(MainTab.reports)
-                GoalsView().tabItem { Label("Goals", systemImage: MainTab.goals.symbol) }.tag(MainTab.goals)
-                RulesView().tabItem { Label("Apps & Rules", systemImage: MainTab.rules.symbol) }.tag(MainTab.rules)
-                SleepView().tabItem { Label("Sleep", systemImage: MainTab.sleep.symbol) }.tag(MainTab.sleep)
-                SettingsView().tabItem { Label("Settings", systemImage: MainTab.settings.symbol) }.tag(MainTab.settings)
-            }
-            .padding(12)
-        }
-        .frame(minWidth: 860, minHeight: 580)
     }
 }

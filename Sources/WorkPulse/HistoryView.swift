@@ -48,11 +48,11 @@ struct HistoryView: View {
         Screen {
             ScrollViewReader { page in
                 VStack(alignment: .leading, spacing: 16) {
-                    ScreenHeader(title: "History", subtitle: "See your sessions and correct them.") {
+                    ScreenHeader(title: "History", subtitle: "") {
                         HStack(spacing: 8) {
-                            Button(action: newSession) { Label("Add Session…", systemImage: "plus") }
+                            Button(action: newSession) { Label("Add Session…", systemImage: "plus").font(HistoryText.button) }
                                 .help("Add a session that WorkPulse did not record")
-                            Button(action: exportCSV) { Label("Export CSV…", systemImage: "arrow.down.to.line") }
+                            Button(action: exportCSV) { Label("Export CSV…", systemImage: "arrow.down.to.line").font(HistoryText.button) }
                                 .disabled(sessions.isEmpty)
                         }
                         .buttonStyle(WPButtonStyle())
@@ -70,7 +70,8 @@ struct HistoryView: View {
                         }
                     }
                     .fixedSize(horizontal: false, vertical: true)   // side by side, the table card is as high as the panel
-                    .onGeometryChange(for: Bool.self) { $0.size.width >= 756 } action: { wide = $0 }
+                    // The artboard changes at 756 pt. The application icons need 28 pt more in the last column.
+                    .onGeometryChange(for: Bool.self) { $0.size.width >= 784 } action: { wide = $0 }
                 }
                 .onChange(of: editing?.id) {
                     // Below the table, the panel can be out of view: bring it into view.
@@ -142,49 +143,42 @@ struct HistoryView: View {
 
     @ViewBuilder private var pickers: some View {
         HistoryField(label: "Range") {
-            Picker("Range", selection: $scope) {
-                ForEach(Scope.allCases) { Text($0.rawValue).tag($0) }
-            }
-            .labelsHidden().controlSize(.large).frame(width: 112)
+            WPMenu("Range", selection: $scope, options: Scope.allCases.map { ($0, $0.rawValue) }).frame(width: 112)
         }
         if scope == .custom {
-            dateField("From", $from)
-            dateField("To", $to)
+            HistoryField(label: "From") { dateField("From", $from) }
+            HistoryField(label: "To") { dateField("To", $to) }
         } else if scope != .all {
             let unit = scope.rawValue.lowercased()
-            HStack(alignment: .bottom, spacing: 4) {
-                Button { shift(-1) } label: { Image(systemName: "chevron.left") }
-                    .buttonStyle(WPButtonStyle())
-                    .accessibilityLabel("Previous \(unit)").help("Previous \(unit)")
-                dateField("Date", $anchor)
-                Button { shift(1) } label: { Image(systemName: "chevron.right") }
-                    .buttonStyle(WPButtonStyle())
-                    .disabled(range.map { $0.upperBound >= .today() } ?? true)
-                    .accessibilityLabel("Next \(unit)").help("Next \(unit)")
+            HistoryField(label: "Date") {
+                HStack(spacing: 4) {
+                    Button { shift(-1) } label: { Image(systemName: "chevron.left") }
+                        .accessibilityLabel("Previous \(unit)").help("Previous \(unit)")
+                    dateField("Date", $anchor)
+                    Button { shift(1) } label: { Image(systemName: "chevron.right") }
+                        .disabled(range.map { $0.upperBound >= .today() } ?? true)
+                        .accessibilityLabel("Next \(unit)").help("Next \(unit)")
+                }
+                .buttonStyle(WPButtonStyle())
             }
-            Button("Today") { anchor = Date() }.buttonStyle(WPButtonStyle())
+            Button { anchor = Date() } label: { Text("Today").font(HistoryText.button) }.buttonStyle(WPButtonStyle())
         }
         HistoryField(label: "Type") {
-            Picker("Type", selection: $kind) {
-                Text("All types").tag(SessionKind?.none)
-                ForEach(SessionKind.allCases, id: \.self) { Text(HistoryText.kind($0)).tag(SessionKind?.some($0)) }
-            }
-            .labelsHidden().controlSize(.large).frame(width: 132)
+            WPMenu("Type", selection: $kind,
+                   options: [(SessionKind?.none, "All types")] + SessionKind.allCases.map { (SessionKind?.some($0), HistoryText.kind($0)) })
+                .frame(width: 132)
         }
     }
 
     private func dateField(_ label: String, _ date: Binding<Date>) -> some View {
-        HistoryField(label: label) {
-            DatePicker(label, selection: date, in: ...Date(), displayedComponents: .date)
-                .labelsHidden().controlSize(.large).fixedSize()
-        }
+        WPDateField(selection: date, elements: .yearMonthDay, maxDate: Date()).historyDate(label).wpField()
     }
 
     private var searchField: some View {
         HistoryField(label: "Search") {
-            HStack(spacing: 6) {
-                Image(systemName: "magnifyingglass").foregroundStyle(WP.caption).accessibilityHidden(true)
-                TextField("Application, note, category", text: $search)
+            HStack(spacing: 7) {
+                Image(systemName: "magnifyingglass").font(WP.font(13, .medium)).foregroundStyle(WP.caption).accessibilityHidden(true)
+                TextField("App, note, category", text: $search)
                     .textFieldStyle(.plain).font(WP.font(13)).foregroundStyle(WP.ink)
                     .accessibilityLabel("Search")
             }
@@ -195,16 +189,17 @@ struct HistoryView: View {
 
     // MARK: Table
 
-    private var hairline: some View { Rectangle().fill(WP.hairline).frame(height: 1) }
+    /// The line under the column titles and above the totals, one step stronger than the row lines.
+    private var hairline: some View { Rectangle().fill(WP.track).frame(height: 1) }
 
     private var table: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 0) {
-                Text("Start").frame(width: HistoryRow.start, alignment: .leading)
-                Text("End").frame(width: HistoryRow.end, alignment: .leading)
-                Text("Duration").frame(width: HistoryRow.duration, alignment: .trailing)
-                Text("Type").padding(.leading, 20).frame(width: HistoryRow.type, alignment: .leading)
-                Text("Application").frame(maxWidth: .infinity, alignment: .leading)
+            HistoryColumns {
+                Text("Start").historyCell(0)
+                Text("End").historyCell(1)
+                Text("Duration").historyCell(2)
+                Text("Type").historyCell(3)
+                Text("Application").historyCell(4)
             }
             .font(WP.font(12, .medium)).foregroundStyle(WP.caption).lineLimit(1)
             .padding(.horizontal, 16).frame(height: 36)
@@ -237,7 +232,7 @@ struct HistoryView: View {
                             Text(HistoryText.day(group.day)).font(WP.font(12, .semibold)).foregroundStyle(WP.secondary)
                                 .padding(.horizontal, 16)
                                 .frame(maxWidth: .infinity, minHeight: 28, maxHeight: 28, alignment: .leading)
-                                .background(WP.hover.opacity(0.5))
+                                .background { Rectangle().fill(WP.hover.opacity(0.5)) }   // a style alone gets round corners on macOS 26
                                 .overlay(alignment: .bottom) { hairline }
                                 .accessibilityAddTraits(.isHeader)
                         }
@@ -307,6 +302,9 @@ struct HistoryView: View {
 @MainActor private enum HistoryText {
     static func kind(_ kind: SessionKind) -> String { kind == .excluded ? "Ignored" : Fmt.kind(kind) }
 
+    /// Outlined buttons have medium text; the filled and the delete button keep the semibold of `WPButtonStyle`.
+    static let button = WP.font(13, .medium)
+
     /// Clock time in the UTC offset of the session, the same offset that decides its day.
     static func clock(_ date: Date, _ session: Session) -> String {
         Fmt.time(minutes: Int(((date.timeIntervalSince1970 + Double(session.tzOffset)) / 60).rounded(.down)))
@@ -356,9 +354,47 @@ private struct HistorySwatch: View {
     }
 }
 
+/// The five table columns across the full width, like an HTML table: each column gets its base
+/// width and a share of the free space in proportion to it. Without free space, the last column
+/// (Application) gets narrower.
+private struct HistoryColumns: Layout {
+    /// Start, End, Duration, Type, Application: the widest content of each column with its padding
+    /// (for Application, an icon and a name of about 18 letters).
+    static let base: [CGFloat] = [66, 74, 72, 104, 160]
+
+    static func widths(_ total: CGFloat) -> [CGFloat] {
+        let sum = base.reduce(0, +), free = total - sum
+        return free < 0 ? base.dropLast() + [max(0, base[4] + free)] : base.map { $0 + free * $0 / sum }
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        CGSize(width: proposal.width ?? Self.base.reduce(0, +),
+               height: proposal.height ?? subviews.map { $0.sizeThatFits(.unspecified).height }.max() ?? 0)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var x = bounds.minX
+        for (view, width) in zip(subviews, Self.widths(bounds.width)) {
+            view.place(at: CGPoint(x: x, y: bounds.midY), anchor: .leading, proposal: ProposedViewSize(width: width, height: bounds.height))
+            x += width
+        }
+    }
+}
+
+private extension View {
+    /// A date field at its natural width. The native control draws its text 1 pt above the centre line of the menus and buttons.
+    func historyDate(_ label: String) -> some View { fixedSize().offset(y: 1).accessibilityLabel(label) }
+
+    /// The padding and alignment of table column `index` (Duration is right-aligned; Type has more space before it).
+    func historyCell(_ index: Int) -> some View {
+        self.padding(.leading, [0, 8, 8, 20, 8][index]).padding(.trailing, index == 4 ? 0 : 8)
+            .frame(maxWidth: .infinity, alignment: index == 2 ? .trailing : .leading)
+    }
+}
+
 /// One session in the table. A click opens it in the edit panel.
 private struct HistoryRow: View {
-    static let start: CGFloat = 68, end: CGFloat = 60, duration: CGFloat = 68, type: CGFloat = 116, height: CGFloat = 40
+    static let height: CGFloat = 43
 
     let session: Session
     let live: Bool
@@ -370,14 +406,14 @@ private struct HistoryRow: View {
         let start = HistoryText.clock(session.start, session)
         let end = HistoryText.clock(session.end, session)
         Button(action: action) {
-            HStack(spacing: 0) {
+            HistoryColumns {
                 HStack(spacing: 6) {
                     if selected {
                         Image(systemName: "pencil").font(.system(size: 11, weight: .bold)).accessibilityLabel("Selected for edit")
                     }
                     Text(start).fontWeight(.semibold)
                 }
-                .frame(width: Self.start, alignment: .leading)
+                .historyCell(0)
                 Group {
                     if live {
                         HStack(spacing: 6) {
@@ -391,23 +427,24 @@ private struct HistoryRow: View {
                         Text(end)
                     }
                 }
-                .frame(width: Self.end, alignment: .leading)
-                Text(Fmt.duration(session.duration)).fontWeight(.semibold).frame(width: Self.duration, alignment: .trailing)
+                .historyCell(1)
+                Text(Fmt.duration(session.duration)).fontWeight(.semibold).historyCell(2)
                 HStack(spacing: 6) {
                     HistorySwatch(kind: session.kind)
                     Text(HistoryText.kind(session.kind))
                 }
-                .padding(.leading, 20).frame(width: Self.type, alignment: .leading)
+                .historyCell(3)
                 HStack(spacing: 8) {
                     if let name = session.appName { AppTile(name: name, bundleID: session.bundleID, size: 18) }
                     Text(session.appName ?? "—").foregroundStyle(session.appName == nil ? WP.caption : WP.ink)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .historyCell(4)
             }
             .font(WP.font(13)).monospacedDigit().foregroundStyle(WP.ink).lineLimit(1)
             .padding(.horizontal, 16)
             .frame(height: Self.height)
-            .background(selected ? WP.cobalt.opacity(0.12) : hovered ? WP.hover.opacity(0.5) : .clear)
+            // A rectangle: a style alone gets round corners on macOS 26.
+            .background { Rectangle().fill(selected ? WP.cobalt.opacity(0.12) : hovered ? WP.hover.opacity(0.5) : .clear) }
             .overlay(alignment: .bottom) { Rectangle().fill(WP.hairline).frame(height: 1) }
             .contentShape(Rectangle())
         }
@@ -458,7 +495,7 @@ struct SessionEditor: View {
                 fact("Duration", draft.end > draft.start ? Fmt.duration(draft.duration) : "—")
             }
             .padding(.horizontal, 12).padding(.vertical, 10)
-            .background(WP.hover, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .background(WP.hover.opacity(0.6), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
 
             VStack(alignment: .leading, spacing: 6) {
                 ViewThatFits(in: .horizontal) {
@@ -473,12 +510,7 @@ struct SessionEditor: View {
             }
 
             HistoryField(label: "Category") {
-                Picker("Category", selection: $classTag) {
-                    ForEach(model.categories) { Text($0.name).tag($0.id) }
-                    Divider()
-                    Text("Idle").tag(Int64(0))
-                }
-                .labelsHidden().controlSize(.large).frame(maxWidth: .infinity, alignment: .leading)
+                WPMenu("Category", selection: $classTag, options: model.categories.map { ($0.id, $0.name) } + [(Int64(0), "Idle")])
             }
             HistoryField(label: "Note (optional)") {
                 TextField("", text: $draft.note)
@@ -496,14 +528,17 @@ struct SessionEditor: View {
                         .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(WP.red).allowsHitTesting(false))
                 }
                 Spacer(minLength: 0)
-                Button("Cancel", action: close).buttonStyle(WPButtonStyle())
-                Button("Save", action: save).buttonStyle(WPButtonStyle(kind: .primary)).disabled(invalid)
+                Button(action: close) { Text("Cancel").font(HistoryText.button).padding(.horizontal, 2) }.buttonStyle(WPButtonStyle())
+                Button(action: save) { Text("Save").padding(.horizontal, 6) }.buttonStyle(WPButtonStyle(kind: .primary))
+                    .shadow(color: WP.cobalt.opacity(invalid ? 0 : 0.3), radius: 5, y: 4)
+                    .disabled(invalid)
             }
             .padding(.top, 12)
             .overlay(alignment: .top) { Rectangle().fill(WP.hairline).frame(height: 1) }
         }
         .frame(minWidth: 280, idealWidth: 320, maxWidth: .infinity, alignment: .leading)
         .wpCard(strong: true)
+        .shadow(color: WP.navy.opacity(0.14), radius: 15, y: 12)
         .onExitCommand(perform: close)   // Esc, while the panel has the keyboard focus
         .accessibilityElement(children: .contain)
         .accessibilityLabel(isNew ? "Add session" : "Edit session")
@@ -526,9 +561,12 @@ struct SessionEditor: View {
     /// Date and time: a session can be on a different day, or go through midnight.
     private func timeField(_ label: String, _ date: Binding<Date>) -> some View {
         HistoryField(label: label) {
-            DatePicker(label, selection: date)
-                .datePickerStyle(.stepperField).labelsHidden().controlSize(.large)
-                .font(WP.font(13, .medium)).monospacedDigit().fixedSize()
+            HStack(spacing: 0) {
+                WPDateField(selection: date, elements: [.yearMonthDay, .hourMinute]).historyDate(label)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, -4)   // the picker has its own inset; with it, Start and End fit side by side in a 320 pt panel
+            .wpField()
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }

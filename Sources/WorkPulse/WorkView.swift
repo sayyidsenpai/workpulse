@@ -111,9 +111,11 @@ struct WorkDayEditor: View {
             })
         return VStack(alignment: .leading, spacing: 4) {
             FieldLabel(label)
-            DatePicker(label, selection: date, displayedComponents: .hourAndMinute)
-                .datePickerStyle(.stepperField).labelsHidden()
-                .font(WP.font(15, .semibold)).monospacedDigit()
+            HStack(spacing: 0) {
+                WPDateField(selection: date, size: 15, weight: .semibold).accessibilityLabel(label)
+                Spacer(minLength: 0)
+            }
+            .wpField(height: 40, radius: 10)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -127,19 +129,14 @@ struct WorkDayEditor: View {
 
     private var goalSlider: some View {
         let length = schedule.lengthMinutes
-        let upper = Double(max(goalMax, 60))   // a slider needs a range; values above goalMax are refused
         return VStack(alignment: .leading, spacing: 2) {
             HStack(alignment: .firstTextBaseline) {
                 FieldLabel("Daily goal")
                 Spacer()
                 Text(Fmt.minutes(shownGoal)).font(WP.font(15, .bold)).monospacedDigit().foregroundStyle(WP.ink)
             }
-            Slider(value: Binding(get: { Double(shownGoal) },
-                                  set: { goal = min(goalMax, max(30, Int(($0 / 30).rounded()) * 30)) }),
-                   in: 30...upper) { editing in if !editing { commit() } }
-                .tint(WP.cobalt)
-                .accessibilityLabel("Daily goal")
-                .accessibilityValue(Fmt.minutes(shownGoal))
+            WPSlider(value: Binding(get: { shownGoal }, set: { goal = $0 }), range: 30...goalMax, step: 30,
+                     label: "Daily goal", valueText: Fmt.minutes(shownGoal), onCommit: commit)
             Text(relation(length)).font(WP.font(12)).monospacedDigit().foregroundStyle(WP.secondary)
         }
     }
@@ -183,7 +180,7 @@ struct WorkDial: View {
                         DialArc(start: start, length: length).stroke(WP.textBlue, style: StrokeStyle(lineWidth: 30, lineCap: .round)).opacity(0.35)
                     }
                 }
-                .focusable(enabled).focused($focus, equals: .arc).focusEffectDisabled()
+                .focusable(enabled, interactions: .activate).focused($focus, equals: .arc).focusEffectDisabled()
                 .onKeyPress(keys: Self.keys) { press in step(.arc, press.key) }
                 .accessibilityElement()
                 .accessibilityLabel("Move work hours")
@@ -234,7 +231,7 @@ struct WorkDial: View {
             .scaleEffect(dragging == part ? 1.12 : 1)
             .animation(.easeOut(duration: 0.12), value: dragging)
             .position(point(minutes, radius))
-            .focusable(enabled).focused($focus, equals: part).focusEffectDisabled()
+            .focusable(enabled, interactions: .activate).focused($focus, equals: part).focusEffectDisabled()
             .onKeyPress(keys: Self.keys) { press in step(part, press.key) }
             .accessibilityElement()
             .accessibilityLabel(label)

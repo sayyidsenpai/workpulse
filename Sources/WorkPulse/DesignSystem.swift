@@ -47,12 +47,17 @@ enum WP {
     static let heroLight = dyn(rgb(0xE8ECF4), rgb(0x2A3242))   // Personal, non-work
 
     // Surfaces and lines.
+    /// The glass panel that fills a window, over the wallpaper.
+    static let panel = dyn(rgb(0xFFFFFF, 0.62), rgb(0x0B1020, 0.45))
+    /// The content area of the main window, one step lighter than the sidebar.
+    static let content = dyn(rgb(0xFFFFFF, 0.50), rgb(0xFFFFFF, 0.04))
     static let card = dyn(rgb(0xFFFFFF, 0.66), rgb(0xFFFFFF, 0.07))
     static let cardStrong = dyn(rgb(0xFFFFFF, 0.78), rgb(0xFFFFFF, 0.10))
     static let field = dyn(rgb(0xFFFFFF), rgb(0x1B2130))
     static let border = dyn(rgb(0x0D1B4D, 0.55), rgb(0xFFFFFF, 0.50))   // control outlines, 3:1 or more
     static let hairline = dyn(rgb(0x0D1B4D, 0.10), rgb(0xFFFFFF, 0.12))
     static let track = dyn(rgb(0x0D1B4D, 0.12), rgb(0xFFFFFF, 0.16))
+    static let sliderTrack = dyn(rgb(0x0D1B4D, 0.22), rgb(0xFFFFFF, 0.24))
     static let hover = dyn(rgb(0x0D1B4D, 0.08), rgb(0xFFFFFF, 0.10))
 
     /// Type scale: 11 · 12 · 13 · 14 · 15 · 20 · 24 · 32 · 44 · 48.
@@ -110,6 +115,19 @@ struct Wallpaper: View {
     private func blob(_ color: NSColor, at center: UnitPoint, radius: CGFloat) -> some View {
         RadialGradient(colors: [Color(nsColor: color), Color(nsColor: color.withAlphaComponent(0))],
                        center: center, startRadius: 0, endRadius: radius)
+    }
+}
+
+/// The background of a window: the blurred desktop, the wallpaper colours, then the glass panel.
+struct Backdrop: View {
+    var body: some View {
+        ZStack {
+            Glass()
+            Wallpaper().opacity(0.85)
+            WP.panel
+        }
+        .ignoresSafeArea()
+        .accessibilityHidden(true)
     }
 }
 
@@ -196,11 +214,13 @@ struct ScreenHeader<Trailing: View>: View {
     @ViewBuilder var trailing: Trailing
 
     var body: some View {
-        HStack(alignment: .bottom, spacing: 12) {
+        HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 4) {
                 Text(title).font(WP.font(24, .bold)).tracking(-0.4).foregroundStyle(WP.ink)
                     .accessibilityAddTraits(.isHeader)
-                Text(subtitle).font(WP.font(13)).foregroundStyle(WP.secondary).fixedSize(horizontal: false, vertical: true)
+                if !subtitle.isEmpty {
+                    Text(subtitle).font(WP.font(13)).foregroundStyle(WP.secondary).fixedSize(horizontal: false, vertical: true)
+                }
             }
             Spacer(minLength: 12)
             trailing
@@ -279,7 +299,7 @@ struct WPSwitchStyle: ToggleStyle {
     @Environment(\.isEnabled) private var enabled
 
     func makeBody(configuration: Configuration) -> some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 10) {
             configuration.label.font(WP.font(13, .medium)).foregroundStyle(WP.ink)
             Spacer(minLength: 8)
             Text(configuration.isOn ? "On" : "Off").font(WP.font(13, .semibold)).foregroundStyle(WP.secondary)
@@ -293,6 +313,146 @@ struct WPSwitchStyle: ToggleStyle {
         .accessibilityAddTraits(.isButton)
         .accessibilityValue(configuration.isOn ? "On" : "Off")
         .accessibilityAction { configuration.isOn.toggle() }
+    }
+}
+
+/// A slider in steps: a cobalt fill to the left of a white thumb. Drag it, or use the arrow keys.
+struct WPSlider: View {
+    @Binding var value: Int
+    let range: ClosedRange<Int>
+    var step = 1
+    var label = ""
+    /// What VoiceOver reads as the value, for example "6h 00m".
+    var valueText = ""
+    /// Runs when a change is complete (the drag ends, or a key was pressed).
+    var onCommit: () -> Void = {}
+    @FocusState private var focused: Bool
+    @Environment(\.isEnabled) private var enabled
+    private let thumb: CGFloat = 26
+
+    var body: some View {
+        GeometryReader { geo in
+            let span = max(1, range.upperBound - range.lowerBound)
+            let fraction = CGFloat(min(max(value, range.lowerBound), range.upperBound) - range.lowerBound) / CGFloat(span)
+            let travel = max(1, geo.size.width - thumb)
+            ZStack(alignment: .leading) {
+                Capsule().fill(WP.sliderTrack).frame(height: 8)
+                Capsule().fill(WP.cobalt).frame(width: thumb / 2 + travel * fraction, height: 8)
+                ZStack {
+                    if focused { Circle().fill(WP.textBlue).padding(-5); Circle().fill(.white).padding(-2) }
+                    Circle().fill(WP.cobalt)
+                    Circle().fill(.white).padding(2)
+                }
+                .frame(width: thumb, height: thumb)
+                .shadow(color: WP.navy.opacity(0.28), radius: 3, y: 2)
+                .offset(x: travel * fraction)
+            }
+            .frame(height: thumb)
+            .contentShape(Rectangle())
+            .gesture(DragGesture(minimumDistance: 0)
+                .onChanged { drag in
+                    let at = min(1, max(0, (drag.location.x - thumb / 2) / travel))
+                    set(Double(range.lowerBound) + Double(at) * Double(span))
+                }
+                .onEnded { _ in onCommit() })
+        }
+        .frame(height: thumb)
+        .opacity(enabled ? 1 : 0.45)
+        .focusable(enabled, interactions: .activate).focused($focused).focusEffectDisabled()
+        .onKeyPress(keys: [.leftArrow, .downArrow]) { _ in set(Double(value - step)); onCommit(); return .handled }
+        .onKeyPress(keys: [.rightArrow, .upArrow]) { _ in set(Double(value + step)); onCommit(); return .handled }
+        .accessibilityElement()
+        .accessibilityLabel(label)
+        .accessibilityValue(valueText)
+        .accessibilityAdjustableAction { direction in
+            set(Double(value + (direction == .increment ? step : -step)))
+            onCommit()
+        }
+    }
+
+    /// Stores the nearest step inside the range.
+    private func set(_ raw: Double) {
+        let stepped = Int((raw / Double(step)).rounded()) * step
+        value = min(range.upperBound, max(range.lowerBound, stepped))
+    }
+}
+
+/// A date or time, typed or stepped with the arrow keys (the native control without its own
+/// frame). Put it in `.wpField()` so it looks like the menus and text fields beside it.
+struct WPDateField: NSViewRepresentable {
+    @Binding var selection: Date
+    var elements: NSDatePicker.ElementFlags = .hourMinute
+    var maxDate: Date? = nil
+    var size: CGFloat = 13
+    var weight: NSFont.Weight = .medium
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    func makeNSView(context: Context) -> NSDatePicker {
+        let picker = NSDatePicker()
+        picker.datePickerStyle = .textField
+        picker.isBezeled = false
+        picker.isBordered = false
+        picker.drawsBackground = false
+        picker.focusRingType = .none   // the selected part is highlighted; the field has the outline
+        picker.target = context.coordinator
+        picker.action = #selector(Coordinator.changed(_:))
+        picker.setContentHuggingPriority(.required, for: .horizontal)
+        picker.setContentCompressionResistancePriority(.required, for: .horizontal)
+        return picker
+    }
+
+    func updateNSView(_ picker: NSDatePicker, context: Context) {
+        context.coordinator.parent = self
+        picker.datePickerElements = elements
+        picker.maxDate = maxDate
+        picker.font = .monospacedDigitSystemFont(ofSize: size, weight: weight)
+        picker.textColor = .labelColor
+        picker.isEnabled = context.environment.isEnabled
+        if picker.dateValue != selection { picker.dateValue = selection }
+    }
+
+    final class Coordinator: NSObject {
+        var parent: WPDateField
+        init(_ parent: WPDateField) { self.parent = parent }
+        @MainActor @objc func changed(_ sender: NSDatePicker) { parent.selection = sender.dateValue }
+    }
+}
+
+/// A menu with one selected value, drawn as an outlined field: the same height, border and
+/// corner as the buttons and text fields beside it.
+struct WPMenu<Value: Hashable>: View {
+    let label: String
+    @Binding var selection: Value
+    let options: [(value: Value, title: String)]
+    @Environment(\.isEnabled) private var enabled
+
+    init(_ label: String, selection: Binding<Value>, options: [(value: Value, title: String)]) {
+        self.label = label
+        self._selection = selection
+        self.options = options
+    }
+
+    var body: some View {
+        let current = options.first { $0.value == selection }?.title ?? ""
+        Menu {
+            Picker(label, selection: $selection) {
+                ForEach(Array(options.enumerated()), id: \.offset) { Text($0.element.title).tag($0.element.value) }
+            }
+            .pickerStyle(.inline).labelsHidden()
+        } label: {
+            HStack(spacing: 6) {
+                Text(current).font(WP.font(13, .medium)).foregroundStyle(WP.ink).lineLimit(1)
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.down").font(.system(size: 10, weight: .bold)).foregroundStyle(WP.caption)
+            }
+            .wpField()
+            .contentShape(Rectangle())
+        }
+        .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden)
+        .opacity(enabled ? 1 : 0.45)
+        .accessibilityLabel(label)
+        .accessibilityValue(current)
     }
 }
 
@@ -318,7 +478,7 @@ struct WPButtonStyle: ButtonStyle {
         }()
         let foreground: Color = text ?? (kind == .primary || kind == .destructive ? .white : WP.ink)
         return configuration.label
-            .font(WP.font(height >= 40 ? 14 : 13, .semibold))
+            .font(WP.font(height >= 40 ? 14 : 13, kind == .secondary && fill == nil ? .medium : .semibold))
             .foregroundStyle(foreground)
             .padding(.horizontal, 12)
             .frame(maxWidth: expand ? .infinity : nil, minHeight: height, maxHeight: height)
@@ -402,16 +562,16 @@ struct Note: View {
 
     var body: some View {
         let (symbol, ink, background): (String, Color, Color) = switch tone {
-        case .info: ("info.circle.fill", WP.textBlue, WP.infoBg)
-        case .warn: ("exclamationmark.triangle.fill", WP.warnInk, WP.warnBg)
-        case .good: ("checkmark.circle.fill", WP.greenInk, WP.greenBg)
+        case .info: ("info.circle", WP.textBlue, WP.infoBg)
+        case .warn: ("exclamationmark.triangle", WP.warnInk, WP.warnBg)
+        case .good: ("checkmark.circle", WP.greenInk, WP.greenBg)
         }
         HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Image(systemName: symbol).foregroundStyle(ink)
-            Text(text).font(WP.font(12)).foregroundStyle(WP.ink).fixedSize(horizontal: false, vertical: true)
+            Image(systemName: symbol).font(.system(size: 14, weight: .semibold)).foregroundStyle(ink)
+            Text(text).font(WP.font(13)).foregroundStyle(WP.ink).fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
         }
-        .padding(10)
+        .padding(.horizontal, 12).padding(.vertical, 10)
         .background(background, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 }

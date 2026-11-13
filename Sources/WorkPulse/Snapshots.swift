@@ -25,7 +25,7 @@ extension AppModel {
             await capture(statesSheet(), size: nil, appearance: appearance, to: folder.appendingPathComponent("states\(suffix).png"))
             refresh()
             for step in 0..<4 {
-                await capture(OnboardingView(step: step).environment(self), size: NSSize(width: 760, height: 640), appearance: appearance,
+                await capture(OnboardingView(step: step).environment(self), size: OnboardingView.size, appearance: appearance,
                               to: folder.appendingPathComponent("onboarding-\(step + 1)\(suffix).png"))
             }
             for tool in ["claude-code", "codex"] {
@@ -71,7 +71,14 @@ extension AppModel {
         .background(Wallpaper())
     }
 
+    /// `--only <text>` renders only the pictures whose file name contains the text.
+    private static let only: String? = {
+        let arguments = CommandLine.arguments
+        return arguments.firstIndex(of: "--only").flatMap { $0 + 1 < arguments.count ? arguments[$0 + 1] : nil }
+    }()
+
     private func capture(_ view: some View, size: NSSize?, appearance: NSAppearance.Name, to url: URL) async {
+        if let only = Self.only, !url.lastPathComponent.contains(only) { return }
         FileHandle.standardError.write(Data("snapshot \(url.lastPathComponent)\n".utf8))
         let host = NSHostingView(rootView: view.background(Color(nsColor: .windowBackgroundColor)))
         let window = NSWindow(contentRect: NSRect(origin: .zero, size: size ?? host.fittingSize),

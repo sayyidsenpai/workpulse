@@ -17,15 +17,9 @@ struct MainView: View {
                     .transition(.opacity)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(WP.card.ignoresSafeArea())
+            .background(WP.content.ignoresSafeArea())
         }
-        .background {
-            ZStack {
-                Glass()
-                Wallpaper().opacity(0.85)
-            }
-            .ignoresSafeArea()
-        }
+        .background { Backdrop() }
         .frame(minWidth: 920, minHeight: 620)
     }
 
@@ -137,7 +131,13 @@ private struct StatusCard: View {
         .foregroundStyle(hero.text)
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(hero.fill, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .background {
+            ZStack {
+                hero.fill
+                LinearGradient(colors: [.white.opacity(0.25), .clear], startPoint: .top, endPoint: UnitPoint(x: 0.5, y: 0.03))
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .shadow(color: hero.fill.opacity(0.3), radius: 9, y: 8)
         .animation(.easeInOut(duration: 0.5), value: hero.title)
         .accessibilityElement(children: .combine)

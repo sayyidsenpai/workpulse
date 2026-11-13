@@ -42,7 +42,7 @@ struct AgentSetupSheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
                     if manual { manualSteps } else { automaticStep }
-                    step(manual ? 3 : 2, tool == "codex" ? "Approve the hooks in Codex" : "Start a new \(name) session") {
+                    step(manual ? 3 : 2, tool == "codex" ? "Approve the hooks in Codex" : "Start a new \(name) session", spacing: 2) {
                         prose(tool == "codex" ? "Codex asks you to approve new hooks one time." : "\(name) loads the hooks when a session starts.")
                     }
                     check
@@ -67,10 +67,7 @@ struct AgentSetupSheet: View {
 
     private var header: some View {
         HStack(spacing: 12) {
-            Image(systemName: "terminal").font(.system(size: 18, weight: .bold)).foregroundStyle(.white)
-                .frame(width: 40, height: 40)
-                .background(WP.navy, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                .accessibilityHidden(true)
+            AppTile(name: name, symbol: "terminal", size: 40)
             VStack(alignment: .leading, spacing: 0) {
                 Text("Set up \(name)").font(WP.font(20, .bold)).tracking(-0.2).foregroundStyle(WP.ink)
                     .accessibilityAddTraits(.isHeader)
@@ -98,7 +95,12 @@ struct AgentSetupSheet: View {
             }
             .foregroundStyle(on ? WP.ink : WP.secondary)
             .frame(maxWidth: .infinity, minHeight: 32)
-            .background(on ? WP.field : Color.clear, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .background {
+                if on {
+                    RoundedRectangle(cornerRadius: 8, style: .continuous).fill(WP.field)
+                        .shadow(color: WP.navy.opacity(0.2), radius: 1.5, y: 1)
+                }
+            }
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -111,7 +113,8 @@ struct AgentSetupSheet: View {
                 Text("Full guide on GitHub").font(WP.font(13, .medium)).underline().foregroundStyle(WP.textBlue)
             }
             Spacer(minLength: 12)
-            Button(connected ? "Done" : "Close") { dismiss() }
+            // 96 pt or more wide: the style adds 12 pt on each side.
+            Button { dismiss() } label: { Text(connected ? "Done" : "Close").font(WP.font(14, .semibold)).frame(minWidth: 72) }
                 .buttonStyle(WPButtonStyle(kind: connected ? .primary : .secondary, height: 36))
                 .keyboardShortcut(.defaultAction)
         }
@@ -120,7 +123,7 @@ struct AgentSetupSheet: View {
     // MARK: - Steps
 
     private var automaticStep: some View {
-        step(1, "Let WorkPulse add the hooks") {
+        step(1, "Let WorkPulse add the hooks", spacing: 10) {
             prose("WorkPulse changes one file only:")
             code(path)
             VStack(alignment: .leading, spacing: 6) {
@@ -130,7 +133,7 @@ struct AgentSetupSheet: View {
             }
             if installed {
                 HStack(spacing: 10) {
-                    Image(systemName: "checkmark.circle.fill").foregroundStyle(WP.green).accessibilityHidden(true)
+                    CheckBadge()
                     VStack(alignment: .leading, spacing: 0) {
                         Text("Hooks added to \(file)").font(WP.font(13, .semibold))
                         Text(model.agentBackupPath(tool).map { "Backup: \($0)" } ?? "No backup: the file did not exist before.")
@@ -147,8 +150,12 @@ struct AgentSetupSheet: View {
                 .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(WP.green.opacity(0.35)))
             } else {
                 VStack(alignment: .leading, spacing: 6) {
-                    Button(action: add) { Label("Add the hooks to \(file)", systemImage: "plus").labelStyle(.titleAndIcon) }
-                        .buttonStyle(WPButtonStyle(kind: .primary, height: 40, radius: 10))
+                    // 18 pt at each side: the style adds 12 pt.
+                    Button(action: add) {
+                        Label("Add the hooks to \(file)", systemImage: "plus").labelStyle(.titleAndIcon).padding(.horizontal, 6)
+                    }
+                    .buttonStyle(WPButtonStyle(kind: .primary, height: 40, radius: 10))
+                    .shadow(color: WP.cobalt.opacity(0.3), radius: 5, y: 4)
                     Text("WorkPulse changes this file only when you select this button.").font(WP.font(12)).foregroundStyle(WP.caption)
                 }
             }
@@ -160,7 +167,7 @@ struct AgentSetupSheet: View {
         step(1, "Open the settings file of \(name)") {
             HStack(spacing: 8) {
                 code(path).frame(maxWidth: .infinity, alignment: .leading)
-                copyButton("path", "Copy path", path)
+                copyButton("path", "Copy path", path, width: 104)
                 Button("Show in Finder", action: reveal).buttonStyle(WPButtonStyle())
                     .disabled(!FileManager.default.fileExists(atPath: configURL.deletingLastPathComponent().path))
             }
@@ -171,12 +178,12 @@ struct AgentSetupSheet: View {
                 HStack(spacing: 8) {
                     Text(file).font(WP.font(12, .semibold).monospaced()).foregroundStyle(WP.onCobalt)
                     Spacer(minLength: 8)
-                    copyButton("block", "Copy block", snippet, onNavy: true)
+                    copyButton("block", "Copy block", snippet, width: 116, onNavy: true)
                 }
                 .padding(.leading, 12).padding([.vertical, .trailing], 6)
                 Rectangle().fill(WP.onCobalt.opacity(0.16)).frame(height: 1)
                 ScrollView([.vertical, .horizontal]) {
-                    Text(snippet).font(WP.font(12).monospaced()).foregroundStyle(WP.onCobalt).textSelection(.enabled)
+                    Text(snippet).font(WP.font(12).monospaced()).lineSpacing(3).foregroundStyle(WP.onCobalt).textSelection(.enabled)
                         .padding(12)
                 }
                 .frame(maxHeight: 168)
@@ -194,7 +201,7 @@ struct AgentSetupSheet: View {
             prose("Send one prompt to \(name). WorkPulse shows the result here.")
             HStack(spacing: 10) {
                 if connected {
-                    Image(systemName: "checkmark.circle.fill").foregroundStyle(WP.green)
+                    CheckBadge()
                 } else {
                     Circle().strokeBorder(WP.cobalt, lineWidth: 3).frame(width: 12, height: 12).modifier(Pulse())
                 }
@@ -204,15 +211,15 @@ struct AgentSetupSheet: View {
             }
             .padding(12)
             .background(connected ? WP.greenBg : WP.infoBg, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder((connected ? WP.green : WP.cobalt).opacity(0.35)))
+            .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(connected ? WP.green.opacity(0.35) : WP.cobalt.opacity(0.3)))
             .accessibilityElement(children: .combine)
         }
     }
 
     /// One numbered step. The line below the number joins it to the next step.
-    private func step<Content: View>(_ number: Int, _ title: String, last: Bool = false, done: Bool = false,
+    private func step<Content: View>(_ number: Int, _ title: String, spacing: CGFloat = 8, last: Bool = false, done: Bool = false,
                                      @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: spacing) {
             Text(title).font(WP.font(14, .bold)).foregroundStyle(WP.ink).frame(minHeight: 28)
                 .accessibilityLabel("Step \(number): \(title)")
                 .accessibilityAddTraits(.isHeader)
@@ -225,8 +232,7 @@ struct AgentSetupSheet: View {
             VStack(spacing: 4) {
                 Group {
                     if done {
-                        Image(systemName: "checkmark").font(.system(size: 12, weight: .heavy)).foregroundStyle(.white)
-                            .frame(width: 28, height: 28).background(WP.green, in: Circle())
+                        CheckBadge(size: 28)
                     } else if last {
                         Text("\(number)").foregroundStyle(WP.textBlue)
                             .frame(width: 28, height: 28).background(WP.field, in: Circle())
@@ -252,7 +258,8 @@ struct AgentSetupSheet: View {
 
     private func tick(_ text: String) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Image(systemName: "checkmark").font(.system(size: 11, weight: .heavy)).foregroundStyle(WP.green).accessibilityHidden(true)
+            Image(systemName: "checkmark").font(.system(size: 12, weight: .bold)).foregroundStyle(WP.green).frame(width: 16)
+                .accessibilityHidden(true)
             Text(text).font(WP.font(13)).foregroundStyle(WP.ink).fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -266,7 +273,8 @@ struct AgentSetupSheet: View {
             .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(WP.hairline))
     }
 
-    private func copyButton(_ id: String, _ title: String, _ text: String, onNavy: Bool = false) -> some View {
+    /// `width`: the least width of the button, so "Copied" does not change its size.
+    private func copyButton(_ id: String, _ title: String, _ text: String, width: CGFloat, onNavy: Bool = false) -> some View {
         let done = copied == id, failed = copied == id + "!"
         return Button {
             NSPasteboard.general.clearContents()
@@ -278,9 +286,9 @@ struct AgentSetupSheet: View {
             }
         } label: {
             Label(done ? "Copied" : failed ? "Copy failed" : title,
-                  systemImage: done ? "checkmark" : failed ? "exclamationmark.triangle" : "doc.on.doc")
+                  systemImage: done ? "checkmark" : failed ? "exclamationmark.triangle" : "square.on.square")
                 .labelStyle(.titleAndIcon)
-                .frame(minWidth: 86)
+                .frame(minWidth: width - 24)   // the style adds 12 pt on each side
         }
         .buttonStyle(WPButtonStyle(fill: onNavy ? .white : nil, text: onNavy ? WP.fixedBlue : nil))
     }
@@ -312,5 +320,17 @@ struct AgentSetupSheet: View {
     /// The model reports errors in the banner of the main window, which the sheet covers.
     private func problem(since before: String?, _ fallback: String) -> String {
         model.banner != before ? model.banner ?? fallback : fallback
+    }
+}
+
+/// A white check mark on a green circle: "connected" and "done". Text always comes with it.
+struct CheckBadge: View {
+    var size: CGFloat = 18
+
+    var body: some View {
+        Image(systemName: "checkmark").font(.system(size: size * 0.5, weight: .heavy)).foregroundStyle(.white)
+            .frame(width: size, height: size)
+            .background(WP.green, in: Circle())
+            .accessibilityHidden(true)
     }
 }

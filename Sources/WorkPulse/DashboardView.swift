@@ -19,6 +19,7 @@ struct DashboardView: View {
             if model.agentConnected {
                 Toggle("Count agent work as my work", isOn: model.binding(\.countAgentWork))
                     .toggleStyle(WPSwitchStyle())
+                    .padding(.vertical, -2)   // 10 pt above and below, as in the design
                     .wpCard(padding: 12)
                     .transition(.opacity)
             }
@@ -45,16 +46,13 @@ struct DashboardView: View {
             VStack(alignment: .leading, spacing: 4) {
                 FieldLabel("Category")
                 if let app = model.frontApp {
-                    Picker("Category", selection: categoryBinding(app)) {
-                        ForEach(model.categories) { Text($0.name).tag($0.id) }
-                    }
-                    .labelsHidden()
+                    WPMenu("Category", selection: categoryBinding(app), options: model.categories.map { ($0.id, $0.name) })
                     .help(Browsers.isBrowser(app.bundleID)
                           ? "WorkPulse does not read tabs or sites. This category applies to all time in \(app.name)."
                           : "The category for time in \(app.name) from now on")
                 } else {
-                    Picker("Category", selection: .constant(Store.uncategorizedID)) { Text("Uncategorized").tag(Store.uncategorizedID) }
-                        .labelsHidden().disabled(true)
+                    WPMenu("Category", selection: .constant(Store.uncategorizedID), options: [(Store.uncategorizedID, "Uncategorized")])
+                        .disabled(true)
                 }
             }
             .frame(width: 150, alignment: .leading)
@@ -286,6 +284,7 @@ struct WorkTimeCard: View {
                     .overlay(alignment: .top) { Rectangle().fill(WP.hairline).frame(height: 1) }
                     .padding(.horizontal, 6)
             }
+            .padding(.bottom, 6)   // 8 pt at the sides and top, 14 pt at the bottom
             .wpCard(padding: 8)
         }
     }

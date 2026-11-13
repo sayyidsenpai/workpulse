@@ -24,14 +24,17 @@ struct SettingsView: View {
     }()
 
     var body: some View {
-        Screen {
-            ScreenHeader(title: "Settings", subtitle: "These settings control tracking, AI agents, sounds, and your data.")
+        // 1046 pt: the content width of the largest window in the design.
+        Screen(maxWidth: 1046) {
+            ScreenHeader(title: "Settings", subtitle: "")
             ViewThatFits(in: .horizontal) {
+                // Two columns from 696 pt (the ideal width); below that they stack. The columns
+                // have one height: the last card of the shorter column grows to the common end.
                 HStack(alignment: .top, spacing: 16) {
-                    // The ideal width makes the two columns fit from 696 pt; below that they stack.
                     VStack(spacing: 16) { tracking; general; data }.frame(minWidth: 340, idealWidth: 340, maxWidth: .infinity)
                     VStack(spacing: 16) { agents; sounds; compensation }.frame(minWidth: 340, idealWidth: 340, maxWidth: .infinity)
                 }
+                .fixedSize(horizontal: false, vertical: true)
                 VStack(spacing: 16) { tracking; general; data; agents; sounds; compensation }
             }
             deleteData
@@ -59,22 +62,23 @@ struct SettingsView: View {
                 SectionTitle("Tracking")
                 caption("The Personal profile counts no work time. These settings apply to the Work profile.")
             }
-            row("Work hours", sub: workHours, wraps: true) {
+            row("Work hours", sub: workHours) {
                 Button("Change in Work…") { withAnimation(.easeOut(duration: 0.15)) { model.tab = .work } }
                     .buttonStyle(WPButtonStyle())
             }
-            line
-            Toggle("Tell me when work hours end", isOn: model.binding(\.notifyWorkEnd)).toggleStyle(WPSwitchStyle())
-            line
+            Toggle("Tell me when work hours end", isOn: model.binding(\.notifyWorkEnd)).toggleStyle(WPSwitchStyle()).divided()
             row("After work hours, return to Personal when idle for") {
-                ChoiceMenu(label: "After work hours, return to Personal when idle for", selection: model.binding(\.returnIdleMinutes),
-                           options: [10, 15, 30, 60], width: 120) { "\($0) min" }
+                WPMenu("After work hours, return to Personal when idle for", selection: model.binding(\.returnIdleMinutes),
+                       options: choices([10, 15, 30, 60]) { "\($0) min" })
+                    .frame(width: 120)
             }
-            line
+            .divided()
             row("Pause when idle for") {
-                ChoiceMenu(label: "Pause when idle for", selection: model.binding(\.idleThreshold),
-                           options: [60, 120, 180, 300, 600, 900, 1800], width: 120) { "\($0 / 60) min" }
+                WPMenu("Pause when idle for", selection: model.binding(\.idleThreshold),
+                       options: choices([60, 120, 180, 300, 600, 900, 1800]) { "\($0 / 60) min" })
+                    .frame(width: 120)
             }
+            .divided()
             caption("Idle time starts at your last keyboard or mouse input. Screen lock and sleep pause tracking immediately.")
         }
     }
@@ -82,176 +86,207 @@ struct SettingsView: View {
     private var general: some View {
         card(2) {
             SectionTitle("General")
+            row("Appearance") {
+                WPMenu("Appearance", selection: model.binding(\.theme),
+                       options: [(.system, "System"), (.light, "Light"), (.dark, "Dark")])
+                    .frame(width: 190)
+            }
             Toggle("Launch at login", isOn: Binding(get: { model.launchAtLogin }, set: { model.setLaunchAtLogin($0) }))
-                .toggleStyle(WPSwitchStyle())
+                .toggleStyle(WPSwitchStyle()).divided()
             if let note = model.loginItemNote { Note(tone: .warn, text: note) }
-            line
             row("Menu bar shows") {
-                ChoiceMenu(label: "Menu bar shows", selection: model.binding(\.menuBarDisplay), options: MenuBarDisplay.allCases, width: 170) {
-                    switch $0 {
-                    case .iconOnly: "Icon only"
-                    case .today: "Today's work time"
-                    case .session: "Current session"
-                    }
-                }
+                WPMenu("Menu bar shows", selection: model.binding(\.menuBarDisplay),
+                       options: [(.iconOnly, "Icon only"), (.today, "Today's work time"), (.session, "Current session")])
+                    .frame(width: 190)
             }
-            line
+            .divided()
             row("Week starts on") {
-                ChoiceMenu(label: "Week starts on", selection: model.binding(\.firstWeekday), options: Array(1...7), width: 170) {
-                    Calendar.current.weekdaySymbols[$0 - 1]
-                }
+                WPMenu("Week starts on", selection: model.binding(\.firstWeekday),
+                       options: choices(Array(1...7)) { Calendar.current.weekdaySymbols[$0 - 1] })
+                    .frame(width: 190)
             }
+            .divided()
         }
     }
 
     private var data: some View {
-        card(3) {
+        card(3, fills: true) {
             SectionTitle("Data and privacy")
             Note(tone: .good, text: "All data stays on this Mac. WorkPulse has no account and no network connection. It does not record keys, screen content, tabs, or URLs.")
-            row("Location", sub: model.store.directory.map { ($0.path as NSString).abbreviatingWithTildeInPath } ?? "In memory (not saved)", wraps: true) {
+            row("Location", sub: model.store.directory.map { ($0.path as NSString).abbreviatingWithTildeInPath } ?? "In memory (not saved)") {
                 if let directory = model.store.directory {
                     Button("Show in Finder") { NSWorkspace.shared.open(directory) }.buttonStyle(WPButtonStyle())
                 }
             }
-            line
-            row("Backups", sub: lastBackup.map { "Saved \($0)" } ?? "\(model.store.backups().count) kept. WorkPulse makes one backup each day.", wraps: true) {
-                HStack(spacing: 8) {
-                    Button("Back Up Now") { lastBackup = model.backupNow() }.buttonStyle(WPButtonStyle())
-                    Button("Restore…", action: restore).buttonStyle(WPButtonStyle())
+            VStack(alignment: .leading, spacing: 6) {
+                row("Backups") {
+                    HStack(spacing: 8) {
+                        Button("Back Up Now") { lastBackup = model.backupNow() }.buttonStyle(WPButtonStyle())
+                        Button("Restore…", action: restore).buttonStyle(WPButtonStyle())
+                    }
                 }
+                // The result of Back Up Now shows here; the design has no place for it.
+                caption(lastBackup.map { "Saved \($0)" } ?? "\(model.store.backups().count) kept. WorkPulse makes one backup each day.")
+                    .textSelection(.enabled)
             }
+            .divided()
         }
     }
 
     private var agents: some View {
         card(4, spacing: 14) {
             SectionTitle("AI agents")
-            VStack(spacing: 0) {
-                ForEach(model.agents) { agent in
-                    if agent.id != model.agents.first?.id { line }
-                    agentRow(agent).padding(.horizontal, 12).padding(.vertical, 10)
-                }
+            // All rows have the same form: one line each when every row fits, else two lines each.
+            ViewThatFits(in: .horizontal) {
+                agentList(oneLine: true)
+                agentList(oneLine: false)
             }
             .background(WP.hover, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
             .accessibilityElement(children: .contain)
             .accessibilityLabel("Agents")
             if !model.agentConnected { Note(text: "No agent is connected. The setting below has no effect now.") }
             Toggle("Count agent work as my work", isOn: model.binding(\.countAgentWork)).toggleStyle(WPSwitchStyle())
-            line
             row("Assume the agent stopped after no signal for") {
-                ChoiceMenu(label: "Assume the agent stopped after no signal for", selection: model.binding(\.agentQuietMinutes),
-                           options: [5, 15, 30, 60], width: 120) { "\($0) min" }
+                WPMenu("Assume the agent stopped after no signal for", selection: model.binding(\.agentQuietMinutes),
+                       options: choices([5, 15, 30, 60]) { "\($0) min" })
+                    .frame(width: 120)
                     .disabled(!model.settings.countAgentWork)
             }
+            .divided()
             caption("While a connected agent works on a task, the time counts as work. An agent is connected after WorkPulse receives the first signal from its hook. WorkPulse reads only this signal. It does not read prompts or output.")
         }
     }
 
-    private func agentRow(_ agent: AgentInfo) -> some View {
+    private func agentList(oneLine: Bool) -> some View {
+        VStack(spacing: 0) {
+            ForEach(model.agents) { agent in
+                if agent.id != model.agents.first?.id { line }
+                agentRow(agent, oneLine: oneLine).padding(.horizontal, 12).padding(.vertical, 10)
+            }
+        }
+    }
+
+    /// Name and last signal on the left, status and button on the right. On two lines, the
+    /// status is below the name and the button stays at the right edge.
+    @ViewBuilder
+    private func agentRow(_ agent: AgentInfo, oneLine: Bool) -> some View {
         let name = HStack(spacing: 10) {
-            Image(systemName: "terminal").font(.system(size: 13, weight: .bold)).foregroundStyle(.white)
-                .frame(width: 28, height: 28)
-                .background(WP.navy, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                .accessibilityHidden(true)
+            AppTile(name: agent.name, symbol: "terminal", size: 28)
             VStack(alignment: .leading, spacing: 0) {
                 Text(agent.name).font(WP.font(13, .semibold)).foregroundStyle(WP.ink)
                 Text(agent.lastSignal.map { "Last signal: \(AgentSetupSheet.signalTime($0))" }
                      ?? (agent.hookInstalled ? "Hooks added. No signal received." : "No signal received"))
                     .font(WP.font(12)).monospacedDigit().foregroundStyle(WP.caption)
             }
+            .fixedSize(horizontal: false, vertical: true)
         }
-        let state = HStack(spacing: 10) {
+        let status = HStack(spacing: 6) {
             if agent.connected {
-                HStack(spacing: 6) {
-                    Image(systemName: "checkmark.circle.fill").foregroundStyle(WP.green)
-                    Text("Connected").font(WP.font(13, .semibold)).foregroundStyle(WP.greenInk)
-                }
-                .accessibilityElement(children: .combine)
+                CheckBadge()
+                Text("Connected").font(WP.font(13, .semibold)).foregroundStyle(WP.greenInk)
             } else {
-                HStack(spacing: 6) {
-                    Image(systemName: "circle.dashed")
-                    Text("Not connected").font(WP.font(13, .semibold))
-                }
-                .foregroundStyle(WP.secondary)
-                .accessibilityElement(children: .combine)
+                Image(systemName: "circle.dashed").font(.system(size: 15, weight: .semibold)).frame(width: 18, height: 18)
+                    .accessibilityHidden(true)
+                Text("Not connected").font(WP.font(13, .semibold))
             }
-            // Also for a connected agent: the sheet is where the hooks can be removed again.
-            Button("Setup steps…") { setup = agent }.buttonStyle(WPButtonStyle())
-                .accessibilityLabel("Setup steps for \(agent.name)")
         }
-        return ViewThatFits(in: .horizontal) {
-            HStack(spacing: 12) { name; Spacer(minLength: 0); state }
-            VStack(alignment: .leading, spacing: 8) { name; state }.frame(maxWidth: .infinity, alignment: .leading)
+        .foregroundStyle(WP.secondary)
+        .fixedSize()
+        .accessibilityElement(children: .combine)
+        // Also for a connected agent: the sheet is where the hooks can be removed again.
+        let button = Button("Setup steps…") { setup = agent }.buttonStyle(WPButtonStyle())
+            .accessibilityLabel("Setup steps for \(agent.name)")
+        if oneLine {
+            HStack(spacing: 10) { name.fixedSize(); Spacer(minLength: 2); status; button }
+        } else {
+            VStack(alignment: .leading, spacing: 8) {
+                name
+                HStack(spacing: 10) { status; Spacer(minLength: 0); button }.padding(.leading, 38)   // under the name
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
     private var sounds: some View {
-        card(5) {
+        let label = Text("Play a sound").font(WP.font(13, .medium)).foregroundStyle(WP.ink)
+        let menu = WPMenu("Play a sound", selection: model.binding(\.sounds),
+                          options: [(.off, "Off"), (.goalAndHours, "Goal reached and end of work hours"), (.all, "All events, with tracking controls")])
+        // The label is 8 pt wide and the style adds 12 pt on each side: a 32 pt square.
+        let sample = Button { Sounds.play(.goal) } label: { Image(systemName: "speaker.wave.2").frame(width: 8) }
+            .buttonStyle(WPButtonStyle())
+            .accessibilityLabel("Play a sample of the goal sound")
+            .help("Play a sample of the goal sound")
+        return card(5) {
             SectionTitle("Sounds")
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Play a sound").font(WP.font(13, .medium)).foregroundStyle(WP.ink)
-                HStack(spacing: 8) {
-                    ChoiceMenu(label: "Play a sound", selection: model.binding(\.sounds), options: SoundMode.allCases) {
-                        switch $0 {
-                        case .off: "Off"
-                        case .goalAndHours: "Goal reached and end of work hours"
-                        case .all: "All events, with tracking controls"
-                        }
-                    }
-                    Button { Sounds.play(.goal) } label: { Image(systemName: "speaker.wave.2") }
-                        .buttonStyle(WPButtonStyle())
-                        .accessibilityLabel("Play a sample of the goal sound")
-                        .help("Play a sample of the goal sound")
-                }
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) { label; Spacer(minLength: 4); menu.frame(width: 290); sample }
+                VStack(alignment: .leading, spacing: 6) { label; HStack(spacing: 8) { menu; sample } }
             }
             caption("Tracking controls are Start work, Pause, Resume, and End work. Sounds use the system volume. Each sound also has a visible change.")
         }
     }
 
     private var compensation: some View {
-        card(6) {
+        card(6, fills: true) {
             SectionTitle("Compensation (optional)")
             ForEach(model.pay.reversed()) { entry in
                 let from = Fmt.day(entry.effectiveFrom, "MMMMyyyy")
                 row("From \(from)", sub: entry.monthlyAmount > 0
                     ? "\(entry.monthlyAmount.formatted(.currency(code: entry.currency))) per month" : "No compensation") {
-                    Button { model.edit { try model.store.deleteCompensation(entry.id) } } label: { Image(systemName: "trash") }
+                    Button { model.edit { try model.store.deleteCompensation(entry.id) } } label: { Image(systemName: "trash").frame(width: 8) }
                         .buttonStyle(WPButtonStyle(kind: .plain, text: WP.red))
                         .accessibilityLabel("Delete the compensation from \(from)")
                         .help("Delete")
                 }
             }
-            HStack(alignment: .bottom, spacing: 8) {
-                labeled("Monthly amount") {
-                    TextField("Monthly amount", value: $amount, format: .number, prompt: Text("Amount"))
-                        .textFieldStyle(.plain).font(WP.font(13)).monospacedDigit().foregroundStyle(WP.ink)
-                        .wpField()
+            // One line in a wide card. In a narrow card the second line fills the width, so the
+            // fields and the Add button keep one right edge.
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .bottom, spacing: 8) { amountField.frame(minWidth: 130); currencyMenu; effectiveFrom(monthWidth: 132); addButton }
+                VStack(spacing: 8) {
+                    HStack(alignment: .bottom, spacing: 8) { amountField; currencyMenu }
+                    HStack(alignment: .bottom, spacing: 8) { effectiveFrom(monthWidth: nil); addButton }
                 }
-                labeled("Currency") {
-                    ChoiceMenu(label: "Currency", selection: $currency, options: Locale.commonISOCurrencyCodes, width: 92) { $0 }
-                }
-                .fixedSize()
-            }
-            HStack(alignment: .bottom, spacing: 8) {
-                labeled("Effective from") {
-                    HStack(spacing: 6) {
-                        ChoiceMenu(label: "Effective from, month", selection: $month, options: Array(1...12)) {
-                            Self.gregorian.standaloneMonthSymbols[$0 - 1]
-                        }
-                        ChoiceMenu(label: "Effective from, year", selection: $year, options: Array(yearRange), width: 88) { String($0) }
-                    }
-                }
-                Button("Add") {
-                    let entry = Compensation(effectiveFrom: LocalDay(year: year, month: month, day: 1),
-                                             monthlyAmount: max(0, amount ?? 0), currency: currency)
-                    model.edit { try model.store.saveCompensation(entry) }
-                    amount = nil
-                }
-                .buttonStyle(WPButtonStyle())
-                .disabled(amount == nil)
             }
             caption("WorkPulse uses this amount only to show an hourly rate in Reports. An amount of 0 stops it. The data stays on this Mac.")
         }
+    }
+
+    private var amountField: some View {
+        labeled("Monthly amount") {
+            TextField("Monthly amount", value: $amount, format: .number, prompt: Text(""))
+                .textFieldStyle(.plain).font(WP.font(13)).monospacedDigit().foregroundStyle(WP.ink)
+                .wpField()
+        }
+    }
+
+    private var currencyMenu: some View {
+        labeled("Currency") {
+            WPMenu("Currency", selection: $currency, options: choices(Locale.commonISOCurrencyCodes) { $0 }).frame(width: 92)
+        }
+        .fixedSize()
+    }
+
+    private func effectiveFrom(monthWidth: CGFloat?) -> some View {
+        labeled("Effective from") {
+            HStack(spacing: 6) {
+                WPMenu("Effective from, month", selection: $month,
+                       options: choices(Array(1...12)) { Self.gregorian.standaloneMonthSymbols[$0 - 1] })
+                    .frame(width: monthWidth)
+                WPMenu("Effective from, year", selection: $year, options: choices(Array(yearRange)) { String($0) }).frame(width: 88)
+            }
+        }
+    }
+
+    private var addButton: some View {
+        Button("Add") {
+            let entry = Compensation(effectiveFrom: LocalDay(year: year, month: month, day: 1),
+                                     monthlyAmount: max(0, amount ?? 0), currency: currency)
+            model.edit { try model.store.saveCompensation(entry) }
+            amount = nil
+        }
+        .buttonStyle(WPButtonStyle())
+        .disabled(amount == nil)
     }
 
     /// Ten years back, for a compensation that started before WorkPulse, to next year.
@@ -268,7 +303,7 @@ struct SettingsView: View {
             VStack(alignment: .leading, spacing: 10) { supportText; sponsorButton }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .wpCard(padding: 14)
+        .wpCard()
     }
 
     private var supportText: some View {
@@ -287,22 +322,26 @@ struct SettingsView: View {
     }
 
     private var deleteData: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        let shape = RoundedRectangle(cornerRadius: 14, style: .continuous)
+        return VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
-                Image(systemName: "exclamationmark.triangle").font(.system(size: 15, weight: .semibold)).foregroundStyle(WP.red)
-                    .accessibilityHidden(true)
-                SectionTitle("Delete data")
+                Image(systemName: "exclamationmark.triangle").font(.system(size: 15, weight: .semibold)).accessibilityHidden(true)
+                Text("Delete data").font(WP.font(15, .bold)).accessibilityAddTraits(.isHeader)
             }
+            .foregroundStyle(WP.red)
             deleteRow("Delete activity history", "This removes all sessions permanently. Rules, goals, settings, and backups stay.",
                       button: "Delete Activity History…") { confirmingHistory = true }
-            line
             deleteRow("Delete everything", "This removes sessions, rules, categories, goals, compensation, settings, and all backups permanently. You cannot undo this.",
                       button: "Delete Everything…") { confirmingEverything = true }
+                .divided(WP.red.opacity(0.3))
             Text("Each button opens a confirmation first.").font(WP.font(12)).foregroundStyle(WP.secondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .wpCard(strong: true)
-        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(WP.red))
+        .padding(16)
+        // A light red over the card surface: the design's delete card.
+        .background(WP.red.opacity(0.05), in: shape)
+        .background(WP.cardStrong, in: shape)
+        .overlay(shape.strokeBorder(WP.red))
         .wpRise(7)
     }
 
@@ -322,9 +361,11 @@ struct SettingsView: View {
 
     // MARK: - Parts
 
-    private func card<Content: View>(_ index: Int, spacing: CGFloat = 12, @ViewBuilder content: () -> Content) -> some View {
+    /// `fills`: the card grows to the end of its column (the last card of a column).
+    private func card<Content: View>(_ index: Int, spacing: CGFloat = 12, fills: Bool = false,
+                                     @ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: spacing) { content() }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(maxWidth: .infinity, maxHeight: fills ? .infinity : nil, alignment: .topLeading)
             .wpCard(strong: true)
             .wpRise(index)
     }
@@ -335,26 +376,23 @@ struct SettingsView: View {
         Text(text).font(WP.font(12)).foregroundStyle(WP.caption).fixedSize(horizontal: false, vertical: true)
     }
 
-    /// A label with its control on the right. With `wraps`, the control moves below the label
-    /// when the two do not fit on one line; without it, the label takes more lines.
-    @ViewBuilder
-    private func row<Control: View>(_ label: String, sub: String? = nil, wraps: Bool = false,
-                                    @ViewBuilder control: () -> Control) -> some View {
-        let text = VStack(alignment: .leading, spacing: 0) {
-            Text(label).font(WP.font(13, .medium)).foregroundStyle(WP.ink)
-            if let sub {
-                Text(sub).font(WP.font(12)).monospacedDigit().foregroundStyle(WP.caption).textSelection(.enabled)
+    /// Menu options from values and a title for each value.
+    private func choices<Value>(_ values: [Value], _ title: (Value) -> String) -> [(value: Value, title: String)] {
+        values.map { ($0, title($0)) }
+    }
+
+    /// A label with its control at the right edge. The label takes more lines in a narrow card.
+    private func row<Control: View>(_ label: String, sub: String? = nil, @ViewBuilder control: () -> Control) -> some View {
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 0) {
+                Text(label).font(WP.font(13, .medium)).foregroundStyle(WP.ink)
+                if let sub {
+                    Text(sub).font(WP.font(12)).monospacedDigit().foregroundStyle(WP.caption).textSelection(.enabled)
+                }
             }
-        }
-        .fixedSize(horizontal: false, vertical: true)
-        let control = control()
-        if wraps {
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: 12) { text; Spacer(minLength: 0); control }
-                VStack(alignment: .leading, spacing: 8) { text; control }.frame(maxWidth: .infinity, alignment: .leading)
-            }
-        } else {
-            HStack(spacing: 12) { text.frame(maxWidth: .infinity, alignment: .leading); control }
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            control().fixedSize()   // the label gives way, never the control
         }
     }
 
@@ -386,35 +424,9 @@ struct SettingsView: View {
     }
 }
 
-/// A menu of fixed choices in the standard field outline. The whole field opens the menu.
-/// Without `width` it fills the space it gets.
-private struct ChoiceMenu<Value: Hashable>: View {
-    let label: String
-    @Binding var selection: Value
-    let options: [Value]
-    var width: CGFloat?
-    let title: (Value) -> String
-    @Environment(\.isEnabled) private var enabled
-
-    var body: some View {
-        Menu {
-            Picker(label, selection: $selection) {
-                ForEach(options, id: \.self) { Text(title($0)).tag($0) }
-            }
-            .pickerStyle(.inline).labelsHidden()
-        } label: {
-            HStack(spacing: 6) {
-                Text(title(selection)).font(WP.font(13, .medium)).foregroundStyle(WP.ink).lineLimit(1)
-                Spacer(minLength: 0)
-                Image(systemName: "chevron.down").font(.system(size: 10, weight: .bold)).foregroundStyle(WP.caption)
-            }
-            .wpField()
-            .contentShape(Rectangle())
-        }
-        .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden)
-        .frame(width: width)
-        .opacity(enabled ? 1 : 0.6)
-        .accessibilityLabel(label)
-        .accessibilityValue(title(selection))
+private extension View {
+    /// A row below a divider line: 12 pt between the line and the row.
+    func divided(_ color: Color = WP.hairline) -> some View {
+        padding(.top, 12).overlay(alignment: .top) { Rectangle().fill(color).frame(height: 1).accessibilityHidden(true) }
     }
 }

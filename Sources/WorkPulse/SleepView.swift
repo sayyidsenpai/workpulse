@@ -45,6 +45,7 @@ struct SleepView: View {
                 .wpRise(1)
             ViewThatFits(in: .horizontal) {
                 HStack(alignment: .top, spacing: 16) { scheduleCard; side }
+                    .fixedSize(horizontal: false, vertical: true)   // both columns get the height of the taller one
                     .frame(minWidth: 696, idealWidth: 696, maxWidth: .infinity)   // two columns of 340 or more
                 VStack(spacing: 16) { scheduleCard; side }
             }
@@ -63,7 +64,7 @@ struct SleepView: View {
     private func hero(_ now: Date) -> some View {
         let next = SleepSchedule.nextFire(after: now, settings: settings)
         let summary = HStack(spacing: 16) {
-            Image(systemName: "moon").font(.system(size: 24, weight: .semibold)).foregroundStyle(WP.navy)
+            Image(systemName: "moon").font(.system(size: 21, weight: .semibold)).foregroundStyle(WP.navy)
                 .frame(width: 56, height: 56)
                 .background(WP.onNavy, in: Circle())
                 .rotationEffect(.degrees(moonIn || reduceMotion ? 0 : -18))
@@ -74,6 +75,7 @@ struct SleepView: View {
                 Text("Next reminder").font(WP.font(12, .medium)).foregroundStyle(WP.onNavy)
                 Text(next.map { Fmt.time($0) } ?? (off ? "Off" : "None"))
                     .font(WP.font(44, .bold)).tracking(-0.9).monospacedDigit().foregroundStyle(.white)
+                    .frame(height: 44)   // line height 1, as in the design
                 Text(detail(next)).font(WP.font(13)).monospacedDigit().foregroundStyle(WP.onNavy)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -87,7 +89,12 @@ struct SleepView: View {
         .padding(20)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(WP.navy, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .shadow(color: WP.navy.opacity(0.35), radius: 12, y: 8)
+        .overlay {   // the light edge at the top of the card
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .strokeBorder(LinearGradient(colors: [.white.opacity(0.18), .clear], startPoint: .top, endPoint: UnitPoint(x: 0.5, y: 0.2)))
+                .allowsHitTesting(false)
+        }
+        .shadow(color: WP.navy.opacity(0.35), radius: 14, y: 12)
     }
 
     private func detail(_ next: Date?) -> String {
@@ -102,41 +109,54 @@ struct SleepView: View {
 
     // MARK: - Schedule
 
+    /// The cards of the two columns end on one line: the space between the parts of a card grows from this minimum.
+    private func gap(_ length: CGFloat = 14) -> some View { Spacer(minLength: length) }
+    /// Shared controls dim themselves when disabled; texts and private controls use this.
+    private var dim: Double { off ? 0.45 : 1 }
+
     private var scheduleCard: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 0) {
             SectionTitle("Schedule")
-            VStack(alignment: .leading, spacing: 14) {
-                HStack(alignment: .top, spacing: 12) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        FieldLabel("Target bedtime")
-                        DatePicker("Target bedtime", selection: bedtime, displayedComponents: .hourAndMinute)
-                            .datePickerStyle(.stepperField).labelsHidden()
-                            .font(WP.font(15, .semibold)).monospacedDigit()
-                            .frame(minHeight: 32)
+            gap()
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 4) {
+                    FieldLabel("Target bedtime")
+                    HStack(spacing: 0) {
+                        WPDateField(selection: bedtime, size: 15, weight: .semibold).accessibilityLabel("Target bedtime")
+                            // The native field has its own inset: the text starts where the menu text starts, on its baseline.
+                            .padding(.leading, -3).offset(y: 1.5)
+                        Spacer(minLength: 0)
                     }
-                    .fixedSize()
-                    VStack(alignment: .leading, spacing: 4) {
-                        FieldLabel("Remind me")
-                        menu("Remind me", sleep.leadMinutes, [0, 5, 10, 15, 30, 45, 60, 90, 120]) {
-                            $0 == 0 ? "At bedtime" : "\($0) minutes before"
-                        }
-                    }
+                    .wpField()
                 }
-                VStack(alignment: .leading, spacing: 6) {
-                    FieldLabel("Days")
-                    dayModes
-                    if schedule.wrappedValue == 2 {
-                        DayChips(days: sleep.days, firstWeekday: model.settings.firstWeekday, keepOne: true)
-                    }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .opacity(dim)
+                VStack(alignment: .leading, spacing: 4) {
+                    FieldLabel("Remind me").opacity(dim)
+                    WPMenu("Remind me", selection: sleep.leadMinutes, options: [0, 5, 10, 15, 30, 45, 60, 90, 120].map {
+                        (value: $0, title: $0 == 0 ? "At bedtime" : "\($0) minutes before")
+                    })
                 }
-                .accessibilityElement(children: .contain)
-                .accessibilityLabel("Days")
-                TimelineView(.everyMinute) { context in DayBar(now: context.date, settings: settings) }
-                    .padding(.top, 14)
-                    .overlay(alignment: .top) { Rectangle().fill(WP.hairline).frame(height: 1) }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .disabled(off).opacity(off ? 0.45 : 1)
+            gap()
+            VStack(alignment: .leading, spacing: 6) {
+                FieldLabel("Days")
+                dayModes
+                if schedule.wrappedValue == 2 {
+                    DayChips(days: sleep.days, firstWeekday: model.settings.firstWeekday, keepOne: true)
+                }
+            }
+            .opacity(dim)
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel("Days")
+            gap()
+            TimelineView(.everyMinute) { context in DayBar(now: context.date, settings: settings) }
+                .padding(.top, 12)
+                .overlay(alignment: .top) { Rectangle().fill(WP.hairline).frame(height: 1) }
+                .opacity(dim)
         }
+        .disabled(off)
         .frame(maxWidth: .infinity, alignment: .leading)
         .wpCard(strong: true)
     }
@@ -165,88 +185,91 @@ struct SleepView: View {
         .background(WP.track, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 
-    /// A menu of minute values with the standard field outline.
-    private func menu(_ label: String, _ value: Binding<Int>, _ options: [Int], title: @escaping (Int) -> String) -> some View {
-        Menu {
-            Picker(label, selection: value) {
-                ForEach(options, id: \.self) { Text(title($0)).tag($0) }
-            }
-            .pickerStyle(.inline).labelsHidden()
-        } label: {
-            HStack(spacing: 6) {
-                Text(title(value.wrappedValue)).font(WP.font(13, .medium)).foregroundStyle(WP.ink).lineLimit(1)
-                Spacer(minLength: 0)
-                Image(systemName: "chevron.down").font(.system(size: 10, weight: .bold)).foregroundStyle(WP.caption)
-            }
-            .wpField()
-            .contentShape(Rectangle())
-        }
-        .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden)
-        .accessibilityLabel(label)
-        .accessibilityValue(title(value.wrappedValue))
-    }
-
     // MARK: - Notification and permission
 
     private var side: some View {
         VStack(spacing: 16) {
-            VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 0) {
+                // The test button is the action of this card: it sits in the title line and adds no row.
                 SectionTitle("Notification")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .overlay(alignment: .trailing) {
+                        Button("Send Test Reminder") {
+                            Task {
+                                await model.reminders.requestAuthorization()
+                                await model.reminders.sendTest(model.settings.sleep)
+                            }
+                        }
+                        .buttonStyle(WPButtonStyle(height: 28))
+                        .disabled(!model.reminders.available)
+                        .help("Shows the reminder in 2 seconds, with the sound setting below.")
+                    }
+                gap()
                 Toggle("Play sound", isOn: sleep.sound).toggleStyle(WPSwitchStyle()).disabled(off)
+                gap()
                 HStack(spacing: 12) {
-                    Text("Snooze for").font(WP.font(13, .medium)).foregroundStyle(WP.ink)
+                    Text("Snooze for").font(WP.font(13, .medium)).foregroundStyle(WP.ink).opacity(dim)
                     Spacer(minLength: 0)
-                    menu("Snooze for", sleep.snoozeMinutes, [5, 10, 15, 20, 30]) { "\($0) minutes" }.frame(width: 150)
+                    WPMenu("Snooze for", selection: sleep.snoozeMinutes, options: [5, 10, 15, 20, 30].map {
+                        (value: $0, title: "\($0) minutes")
+                    })
+                    .frame(width: 150)
                 }
-                .disabled(off).opacity(off ? 0.45 : 1)
+                .disabled(off)
                 .padding(.top, 12)
                 .overlay(alignment: .top) { Rectangle().fill(WP.hairline).frame(height: 1) }
-                Button("Send Test Reminder") {
-                    Task {
-                        await model.reminders.requestAuthorization()
-                        await model.reminders.sendTest(model.settings.sleep)
-                    }
-                }
-                .buttonStyle(WPButtonStyle())
-                .disabled(!model.reminders.available)
-                .help("Shows the reminder in 2 seconds, with the sound setting above.")
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .wpCard(strong: true)
-            permissionCard
+            permissionCard.layoutPriority(1)   // takes its small share of extra height first; the card above takes the rest
         }
     }
 
     private var permissionCard: some View {
         let state = permission
         let status = HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Image(systemName: state.symbol).foregroundStyle(state.tint).accessibilityHidden(true)
+            Image(systemName: state.symbol).font(.system(size: 15)).foregroundStyle(state.tint).accessibilityHidden(true)
             Text(state.text).font(WP.font(13, .semibold)).foregroundStyle(state.ink)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        return VStack(alignment: .leading, spacing: 12) {
-            SectionTitle("Permission")
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: 12) { status; Spacer(minLength: 0); permissionButton }
-                VStack(alignment: .leading, spacing: 12) { status; permissionButton }
+        return ViewThatFits(in: .horizontal) {
+            if state.hint == nil {
+                // As in the design: the button at the right of the status.
+                VStack(alignment: .leading, spacing: 0) {
+                    SectionTitle("Permission")
+                    permissionGap
+                    HStack(spacing: 24) { status; Spacer(minLength: 0); permissionButton(height: 32) }
+                }
             }
-            if let hint = state.hint {
-                Text(hint).font(WP.font(12)).foregroundStyle(WP.secondary).fixedSize(horizontal: false, vertical: true)
+            // A narrow column, or a hint below the status: the button goes to the title line, as in the Notification card.
+            VStack(alignment: .leading, spacing: 0) {
+                SectionTitle("Permission")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .overlay(alignment: .trailing) { permissionButton(height: 28) }
+                permissionGap
+                status
+                if let hint = state.hint {
+                    Text(hint).font(WP.font(12)).foregroundStyle(WP.secondary).fixedSize(horizontal: false, vertical: true)
+                        .padding(.top, 4)
+                }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .wpCard(strong: true)
     }
 
-    @ViewBuilder private var permissionButton: some View {
+    /// Grows a little only: when the Schedule card is the taller one, the Notification card takes most of the difference.
+    private var permissionGap: some View { gap(12).frame(maxHeight: 26) }
+
+    @ViewBuilder private func permissionButton(height: CGFloat) -> some View {
         if model.reminders.available, model.notificationStatus.hasPrefix("Not requested") {
             Button("Allow Notifications…") { model.rescheduleReminders(requestPermission: true) }
-                .buttonStyle(WPButtonStyle(kind: .primary))
+                .buttonStyle(WPButtonStyle(kind: .primary, height: height))
         } else {
             Button("Notification Settings…") {
                 if let url = URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension") { NSWorkspace.shared.open(url) }
             }
-            .buttonStyle(WPButtonStyle())
+            .buttonStyle(WPButtonStyle(height: height))
         }
     }
 
@@ -304,7 +327,7 @@ private struct DayBar: View {
         GeometryReader { geo in
             let width = geo.size.width
             let nowX = width * CGFloat(nowMinutes) / 1440
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 6) {
                 ZStack(alignment: .leading) {
                     ZStack(alignment: .leading) {
                         WP.track
@@ -336,7 +359,7 @@ private struct DayBar: View {
                         .foregroundStyle(reminder == nil ? WP.secondary : WP.warnInk)
                 }
                 .font(WP.font(12)).monospacedDigit()
-                .frame(height: 16)
+                .frame(height: 18)
             }
         }
         .frame(height: 34)

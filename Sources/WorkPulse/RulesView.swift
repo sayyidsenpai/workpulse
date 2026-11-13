@@ -17,16 +17,20 @@ struct RulesView: View {
     @State private var newCategoryKind = SessionKind.work
     @State private var deleting: WorkCategory?
 
-    private static let categoryWidth: CGFloat = 136
-    private static let idleWidth: CGFloat = 118
+    /// The least width of a menu in the table: "Uncategorized" fits.
+    private static let menuWidth: CGFloat = 136
+    /// The width of the "Counts as" menus and of the label of the button at the end of a category row.
+    private static let kindWidth: CGFloat = 116
+    private static let actionWidth: CGFloat = 28
     /// Idle times a user can choose, in seconds.
     private static let idleChoices = [300, 600, 900, 1800]
 
     var body: some View {
-        Screen {
+        Screen(maxWidth: 1046) {   // the width of the content area on the artboard
             ScreenHeader(title: "Apps", subtitle: "Each application has a category. In the Work profile, the category sets if its time counts as work. Changes apply from now on. Recorded history does not change.") {
                 Button(action: addApplication) { Label("Add Application…", systemImage: "plus") }
                     .buttonStyle(WPButtonStyle(kind: .primary))
+                    .shadow(color: WP.cobalt.opacity(0.3), radius: 5, y: 4)
             }
             Note(text: "Browsers do not count as work automatically. WorkPulse does not read tabs, sites, or URLs. Give the browser a category. Its time counts only in the Work profile.")
                 .wpRise(1)
@@ -76,9 +80,34 @@ struct RulesView: View {
                 })
     }
 
+    /// Label, switch, then the word On or Off (the order on the artboard).
     private var unclassifiedSwitch: some View {
-        Toggle("Count applications without a rule as work", isOn: model.binding(\.unclassifiedIsWork))
-            .toggleStyle(WPSwitchStyle())
+        let isOn = model.binding(\.unclassifiedIsWork)
+        return HStack(spacing: 10) {
+            Text("Count applications without a rule as work").font(WP.font(13, .medium)).foregroundStyle(WP.ink)
+                .fixedSize(horizontal: false, vertical: true)
+            WPSwitch(isOn: isOn)
+            Text(isOn.wrappedValue ? "On" : "Off").font(WP.font(13, .semibold)).foregroundStyle(WP.secondary)
+                .frame(minWidth: 22, alignment: .leading)
+        }
+        .contentShape(Rectangle())
+        .onTapGesture { isOn.wrappedValue.toggle() }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Count applications without a rule as work")
+        .accessibilityAddTraits(.isButton)
+        .accessibilityValue(isOn.wrappedValue ? "On" : "Off")
+        .accessibilityAction { isOn.wrappedValue.toggle() }
+    }
+
+    /// One line of the table. The application column takes its width first (250 pt at most),
+    /// then the two menu columns share the remaining width equally.
+    private func columns(_ application: some View, _ category: some View, _ idle: some View) -> some View {
+        HStack(spacing: 16) {
+            application.frame(maxWidth: 250, alignment: .leading).layoutPriority(1)
+            category.frame(minWidth: Self.menuWidth, maxWidth: .infinity, alignment: .leading)
+            idle.frame(minWidth: Self.menuWidth, maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.horizontal, 16)
     }
 
     // ponytail: every row is built at once (two menus each); use a lazy stack if lists pass a few hundred applications.
@@ -86,14 +115,14 @@ struct RulesView: View {
         VStack(alignment: .leading, spacing: 0) {
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 12) {
-                    SectionTitle("Applications")
-                    Spacer(minLength: 12)
+                    SectionTitle("Applications").frame(maxWidth: .infinity, alignment: .leading)
                     unclassifiedSwitch.fixedSize()
                 }
                 VStack(alignment: .leading, spacing: 10) {
                     SectionTitle("Applications")
                     unclassifiedSwitch
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
             .padding(.horizontal, 16).padding(.vertical, 14)
             if apps.isEmpty {
@@ -103,14 +132,10 @@ struct RulesView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .overlay(alignment: .top) { line }
             } else {
-                HStack(spacing: 8) {
-                    Text("Application").frame(maxWidth: .infinity, alignment: .leading)
-                    Text("Category").frame(width: Self.categoryWidth, alignment: .leading)
-                    Text("Idle override").frame(width: Self.idleWidth, alignment: .leading)
-                }
-                .font(WP.font(12, .medium)).foregroundStyle(WP.caption)
-                .padding(.horizontal, 16).padding(.vertical, 8)
-                .overlay(alignment: .top) { line }
+                columns(Text("Application"), Text("Category"), Text("Idle override"))
+                    .font(WP.font(12, .medium)).foregroundStyle(WP.caption)
+                    .padding(.vertical, 8)
+                    .overlay(alignment: .top) { line }
                 ForEach(apps) { appRow($0) }
             }
             Text("Idle override: the time without input before the time of this application stops counting.")
@@ -126,30 +151,28 @@ struct RulesView: View {
         // An idle time that an earlier version stored stays in the menu.
         let stored = model.rule(for: row.id)?.idleThreshold ?? 0
         let idle = (Self.idleChoices + (stored > 0 && !Self.idleChoices.contains(stored) ? [stored] : [])).sorted()
-        return HStack(spacing: 8) {
+        // A long name continues on a second line: it is not cut off.
+        let name = Text(row.name).font(WP.font(13, .semibold)).foregroundStyle(WP.ink)
+            .lineLimit(2).fixedSize(horizontal: false, vertical: true)
+        let badge = Text("Browser").font(WP.font(11, .semibold)).foregroundStyle(WP.secondary)
+            .padding(.horizontal, 8).padding(.vertical, 1)
+            .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(WP.border))
+            .fixedSize()
+        let browser = Browsers.isBrowser(row.id)
+        return columns(
             HStack(spacing: 10) {
                 AppTile(name: row.name, bundleID: row.id, size: 28)
-                Text(row.name).font(WP.font(13, .semibold)).foregroundStyle(WP.ink).lineLimit(1)
-                if Browsers.isBrowser(row.id) {
-                    Text("Browser").font(WP.font(11, .semibold)).foregroundStyle(WP.secondary)
-                        .padding(.horizontal, 8).padding(.vertical, 1)
-                        .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(WP.border))
-                        .fixedSize()
+                // "Browser" is after the name, or below it when the column is too narrow for one line.
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 10) { name; if browser { badge } }
+                    VStack(alignment: .leading, spacing: 2) { name; if browser { badge } }
                 }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            Picker("Category for \(row.name)", selection: bind(row, \.categoryID)) {
-                ForEach(model.categories) { Text($0.name).tag($0.id) }
-            }
-            .labelsHidden().frame(width: Self.categoryWidth)
-            Picker("Idle override for \(row.name)", selection: bind(row, \.idleThreshold)) {
-                Text("Default").tag(Int?.none)
-                ForEach(idle, id: \.self) { Text("\($0 / 60) min").tag(Int?.some($0)) }
-                Text("Never idle").tag(Int?.some(0))
-            }
-            .labelsHidden().frame(width: Self.idleWidth)
-        }
-        .padding(.horizontal, 16).padding(.vertical, 8)
+            },
+            WPMenu("Category for \(row.name)", selection: bind(row, \.categoryID), options: model.categories.map { ($0.id, $0.name) }),
+            WPMenu("Idle override for \(row.name)", selection: bind(row, \.idleThreshold),
+                   options: [(Int?.none, "Default")] + idle.map { (Int?.some($0), "\($0 / 60) min") } + [(Int?.some(0), "Never idle")])
+        )
+        .padding(.vertical, 10)
         .overlay(alignment: .top) { line }
     }
 
@@ -170,7 +193,8 @@ struct RulesView: View {
 
     private var categories: some View {
         VStack(alignment: .leading, spacing: 12) {
-            SectionTitle("Categories")
+            // 22 pt high: the title is on the line of the "Applications" title in the card beside it.
+            SectionTitle("Categories").frame(height: 22)
             VStack(spacing: 0) {
                 ForEach(model.categories) { category in
                     categoryRow(category)
@@ -187,42 +211,48 @@ struct RulesView: View {
 
     private func categoryRow(_ category: WorkCategory) -> some View {
         HStack(spacing: 8) {
-            swatch(category)
-            Text(category.name).font(WP.font(13, .semibold)).foregroundStyle(WP.ink).lineLimit(1)
-                .layoutPriority(category.builtin ? 1 : 0)
-            Spacer(minLength: 4)
+            HStack(spacing: 8) {
+                swatch(category)
+                Text(category.name).font(WP.font(13, .semibold)).foregroundStyle(WP.ink)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: category.builtin ? nil : .infinity, alignment: .leading)
             if category.builtin {
                 // The kind of a built-in category is fixed, so it is text and not a menu.
                 Text(meaning(category)).font(WP.font(13)).foregroundStyle(WP.secondary)
                     .multilineTextAlignment(.trailing).fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
             } else {
+                // The menu and the button are in the columns of the menu and the button of the last row.
                 kindPicker("\(category.name) counts as", Binding(get: { category.kind }, set: { kind in
                     var changed = category
                     changed.kind = kind
                     model.edit { try model.store.saveCategory(changed) }
                 }))
-                .frame(width: 116)
-                Button { deleting = category } label: {
-                    Image(systemName: "trash").font(WP.font(13, .medium)).foregroundStyle(WP.red)
-                        .frame(width: 28, height: 28).contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Delete the category \(category.name)")
-                .help("Delete this category. Its applications become Uncategorized.")
+                .frame(width: Self.kindWidth)
+                Button { deleting = category } label: { Image(systemName: "trash").frame(width: Self.actionWidth) }
+                    .buttonStyle(WPButtonStyle(text: WP.red))
+                    .accessibilityLabel("Delete the category \(category.name)")
+                    .help("Delete this category. Its applications become Uncategorized.")
             }
         }
+        .frame(minHeight: 32)   // a row with text is as high as a row with a menu
         .padding(.vertical, 8)
+    }
+
+    /// An uncategorized application counts as work only when the switch above is on.
+    private func countsAsWork(_ category: WorkCategory) -> Bool {
+        category.kind == .work || (category.id == Store.uncategorizedID && model.settings.unclassifiedIsWork)
     }
 
     /// Cobalt for work, grey for non-work, an outline for Ignored. The text beside it says the same.
     private func swatch(_ category: WorkCategory) -> some View {
         let shape = RoundedRectangle(cornerRadius: 3, style: .continuous)
-        let work = category.kind == .work || (category.id == Store.uncategorizedID && model.settings.unclassifiedIsWork)
         return Group {
             if category.kind == .excluded {
                 shape.strokeBorder(WP.caption, lineWidth: 1.5)
             } else {
-                shape.fill(work ? WP.cobalt : WP.switchOff)
+                shape.fill(countsAsWork(category) ? WP.cobalt : WP.switchOff)
             }
         }
         .frame(width: 10, height: 10)
@@ -230,19 +260,12 @@ struct RulesView: View {
     }
 
     private func meaning(_ category: WorkCategory) -> String {
-        switch category.id {
-        case Store.ignoredID: "Excluded. WorkPulse records only the duration."
-        case Store.uncategorizedID: "Applications without a rule."
-        default: category.kind == .work ? "Counts as work." : "Counts as non-work."
-        }
+        if category.kind == .excluded { return "Excluded. WorkPulse records only the duration." }
+        return countsAsWork(category) ? "Counts as work." : "Counts as non-work."
     }
 
     private func kindPicker(_ label: String, _ selection: Binding<SessionKind>) -> some View {
-        Picker(label, selection: selection) {
-            Text("Work").tag(SessionKind.work)
-            Text("Non-work").tag(SessionKind.nonwork)
-        }
-        .labelsHidden()
+        WPMenu(label, selection: selection, options: [(SessionKind.work, "Work"), (SessionKind.nonwork, "Non-work")])
     }
 
     private var newName: String { newCategory.trimmingCharacters(in: .whitespaces) }
@@ -253,7 +276,7 @@ struct RulesView: View {
             HStack(alignment: .bottom, spacing: 8) {
                 VStack(alignment: .leading, spacing: 4) {
                     FieldLabel("New category")
-                    TextField("New category", text: $newCategory, prompt: Text("Name"))
+                    TextField("New category", text: $newCategory, prompt: Text(""))
                         .textFieldStyle(.plain).font(WP.font(13)).foregroundStyle(WP.ink)
                         .wpField()
                         .onChange(of: newCategory) { if newCategory.count > 40 { newCategory = String(newCategory.prefix(40)) } }
@@ -261,9 +284,9 @@ struct RulesView: View {
                 }
                 VStack(alignment: .leading, spacing: 4) {
                     FieldLabel("Counts as")
-                    kindPicker("New category counts as", $newCategoryKind).frame(width: 116, height: 32)
+                    kindPicker("New category counts as", $newCategoryKind).frame(width: Self.kindWidth)
                 }
-                Button("Add", action: addCategory)
+                Button(action: addCategory) { Text("Add").frame(width: Self.actionWidth) }
                     .buttonStyle(WPButtonStyle())
                     .disabled(newName.isEmpty || nameTaken)
             }

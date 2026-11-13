@@ -21,6 +21,8 @@ private struct Bucket: Identifiable {
     /// The label below the bar. An empty `top` means no label.
     let top: String
     let bottom: String
+    /// A day that is not a work day: its label is lighter.
+    var muted = false
     var id: Int { start.index }
 }
 
@@ -30,6 +32,7 @@ private struct AxisLabel: Identifiable {
     let top: String
     let bottom: String
     let current: Bool
+    let muted: Bool
     var x: CGFloat = 0
     /// An estimate that is never too small, so labels do not touch.
     var width: CGFloat { CGFloat(max(top.count, bottom.count)) * 7 + 8 }
@@ -204,20 +207,16 @@ struct ReportsView: View {
         return HStack(alignment: .bottom, spacing: 12) {
             VStack(alignment: .leading, spacing: 4) {
                 FieldLabel("Year")
-                Picker("Year", selection: yearBinding) {
-                    Text("All time").tag(0)
-                    ForEach(Array((first.components.year...today).reversed()), id: \.self) { Text(String($0)).tag($0) }
-                }
-                .labelsHidden().frame(width: 104)
+                WPMenu("Year", selection: yearBinding,
+                       options: [(0, "All time")] + (first.components.year...today).reversed().map { ($0, String($0)) })
+                    .frame(width: 104)
             }
             if year != 0 {
                 VStack(alignment: .leading, spacing: 4) {
                     FieldLabel("Month")
-                    Picker("Month", selection: $month) {
-                        Text("Whole year").tag(0)
-                        ForEach(months(in: year), id: \.self) { Text(Calendar.current.monthSymbols[$0 - 1]).tag($0) }
-                    }
-                    .labelsHidden().frame(width: 148)
+                    WPMenu("Month", selection: $month,
+                           options: [(0, "Whole year")] + months(in: year).map { ($0, Calendar.current.monthSymbols[$0 - 1]) })
+                        .frame(width: 148)
                 }
             }
         }
@@ -226,7 +225,7 @@ struct ReportsView: View {
     // MARK: Summary
 
     private var tiles: some View {
-        let work = tile("Tracked work", Fmt.duration(data.stats.work), workDetail, hero: true)
+        let work = tile("Tracked work", Fmt.duration(data.stats.work), span(data.range, year: true), more: overtimeText, hero: true)
         let days = tile("Working days", String(data.stats.workingDays),
                         data.includesToday ? "Includes today" : "of \(data.range.days.count) days")
         let average = tile("Average per working day", Fmt.duration(data.stats.averagePerWorkingDay),
@@ -246,10 +245,8 @@ struct ReportsView: View {
         .accessibilityLabel("Summary for \(periodName)")
     }
 
-    private var workDetail: String {
-        let period = span(data.range, year: true)
-        guard let overtime = data.overtime else { return period }
-        return period + (overtime >= 1 ? " · overtime \(Fmt.duration(overtime))" : " · no overtime")
+    private var overtimeText: String? {
+        data.overtime.map { $0 >= 1 ? "overtime \(Fmt.duration($0))" : "no overtime" }
     }
 
     /// Work against the monthly goals of the period. Each monthly goal follows from the daily goal and the work days.
@@ -262,7 +259,9 @@ struct ReportsView: View {
         return (title, "\(Int((work / target * 100).rounded()))%", "\(Fmt.duration(work)) of \(Fmt.duration(target))", work / target)
     }
 
-    private func tile(_ title: String, _ value: String, _ detail: String, bar: Double? = nil, hero: Bool = false) -> some View {
+    /// `more` is the second part of the detail: on the same line, or on its own line in a narrow tile.
+    private func tile(_ title: String, _ value: String, _ detail: String, more: String? = nil,
+                      bar: Double? = nil, hero: Bool = false) -> some View {
         let shape = RoundedRectangle(cornerRadius: 14, style: .continuous)
         return VStack(alignment: .leading, spacing: 4) {
             Text(title).font(WP.font(12, .medium)).foregroundStyle(hero ? WP.onCobalt : WP.caption)
@@ -270,13 +269,27 @@ struct ReportsView: View {
                 .lineLimit(1).minimumScaleFactor(0.6)
                 .foregroundStyle(hero ? Color.white : WP.ink)
             if let bar { WPBar(fraction: bar, height: 6, label: title).padding(.vertical, 2) }
-            Text(detail).font(WP.font(12)).monospacedDigit().foregroundStyle(hero ? WP.onCobalt : WP.caption)
-                .fixedSize(horizontal: false, vertical: true)
+            ViewThatFits(in: .horizontal) {
+                if let more { Text("\(detail) · \(more)").lineLimit(1) }
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(detail).fixedSize(horizontal: false, vertical: true)
+                    if let more { Text(more).fixedSize(horizontal: false, vertical: true) }
+                }
+            }
+            .font(WP.font(12)).monospacedDigit().foregroundStyle(hero ? WP.onCobalt : WP.caption)
         }
         .padding(.horizontal, 16).padding(.vertical, 14)
-        .frame(minWidth: 180, idealWidth: 180, maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        // 120 is the height of the tile with the bar: the two rows of a narrow window are as high as each other.
+        .frame(minWidth: 180, idealWidth: 180, maxWidth: .infinity, minHeight: 120, maxHeight: .infinity, alignment: .topLeading)
         .background(hero ? WP.cobalt : WP.cardStrong, in: shape)
-        .overlay { if !hero { shape.strokeBorder(WP.hairline) } }
+        .overlay {
+            if hero {   // the light top edge of the artboard
+                LinearGradient(colors: [.white.opacity(0.25), .clear], startPoint: .top, endPoint: UnitPoint(x: 0.5, y: 0.03))
+                    .clipShape(shape).allowsHitTesting(false)
+            } else {
+                shape.strokeBorder(WP.hairline)
+            }
+        }
         .shadow(color: hero ? WP.cobalt.opacity(0.3) : .clear, radius: 12, y: 10)
         .accessibilityElement(children: .combine)
     }
@@ -308,6 +321,7 @@ struct ReportsView: View {
         let today = LocalDay.today(), range = data.range, firstWeekday = model.settings.firstWeekday
         let months = Calendar.current.shortMonthSymbols, weekdays = Calendar.current.shortWeekdaySymbols
         let oneMonth = range.lowerBound.monthStart == range.upperBound.monthStart
+        let workDays = Goals.config(on: range.upperBound, projectID: nil, in: model.goals)?.workingDays
         return Aggregator.trend(data.totals, in: range, by: granularity, firstWeekday: firstWeekday).map { item -> Bucket in
             let full = granularity.range(containing: item.start, firstWeekday: firstWeekday)
             let shown = max(full.lowerBound, range.lowerBound)...min(full.upperBound, range.upperBound)
@@ -331,14 +345,16 @@ struct ReportsView: View {
                 name = Fmt.day(item.start, "MMMMyyyy")
                 top = months[c.month - 1]; bottom = current ? "This month" : String(c.year)
             }
-            return Bucket(start: item.start, seconds: item.seconds, name: name, current: current, top: top, bottom: bottom)
+            let muted = granularity == .day && !current && workDays?.contains(item.start.weekday) == false
+            return Bucket(start: item.start, seconds: item.seconds, name: name, current: current, top: top, bottom: bottom, muted: muted)
         }
     }
 
-    /// The step between grid lines, in seconds, and the number of steps. The top line is above the tallest bar.
+    /// The step between grid lines, in seconds, and the number of steps (5 at most).
+    /// The top line is the first line at or above `peak`, so the bars fill the chart.
     private static func scale(_ peak: TimeInterval) -> (step: TimeInterval, ticks: Int) {
-        let hours = max(peak, 60) * 1.15 / 3600   // room for the text above the bar of today and for the goal label
-        let step = [0.25, 0.5, 1, 2, 4, 5, 10, 20, 25, 50, 100, 200, 250, 500, 1000].first { $0 * 4 >= hours } ?? (hours / 4).rounded(.up)
+        let hours = max(peak, 60) / 3600
+        let step = [0.25, 0.5, 1, 2, 4, 5, 10, 20, 25, 50, 100, 200, 250, 500, 1000].first { $0 * 5 >= hours } ?? (hours / 5).rounded(.up)
         return (step * 3600, max(1, Int((hours / step).rounded(.up))))
     }
 
@@ -348,7 +364,10 @@ struct ReportsView: View {
     }
 
     private func chart(_ buckets: [Bucket], goal: TimeInterval?) -> some View {
-        let (step, ticks) = Self.scale(max(buckets.map(\.seconds).max() ?? 0, goal ?? 0))
+        // Room above the bar in progress for its time (18 pt) and above the goal line for its label (22 pt).
+        let current = buckets.last(where: \.current)?.seconds ?? 0
+        let height = Double(Self.plotHeight)
+        let (step, ticks) = Self.scale(max(buckets.map(\.seconds).max() ?? 0, current / (1 - 18 / height), (goal ?? 0) / (1 - 22 / height)))
         return HStack(alignment: .top, spacing: 8) {
             ZStack(alignment: .topTrailing) {
                 ForEach(0...ticks, id: \.self) { i in
@@ -357,6 +376,7 @@ struct ReportsView: View {
                         .offset(y: Self.plotHeight * (1 - CGFloat(i) / CGFloat(ticks)) - 7)
                 }
             }
+            .frame(minWidth: 28, alignment: .trailing)
             .frame(height: Self.plotHeight, alignment: .top)
             .accessibilityHidden(true)
             GeometryReader { geo in
@@ -369,7 +389,8 @@ struct ReportsView: View {
     }
 
     private func plot(_ buckets: [Bucket], width: CGFloat, top: TimeInterval, ticks: Int, goal: TimeInterval?) -> some View {
-        let slot = max(Self.minSlot, width / CGFloat(buckets.count))
+        // 4 pt at each end of the bars and half a gap in each slot: 8 pt at both ends, as between two bars.
+        let slot = max(Self.minSlot, (width - 8) / CGFloat(buckets.count))
         let barWidth = min(96, max(1, slot - min(8, slot * 0.3)))
         let total = slot * CGFloat(buckets.count)
         return ZStack(alignment: .topLeading) {
@@ -385,14 +406,25 @@ struct ReportsView: View {
                     }
                 }
                 .frame(width: total, height: Self.plotHeight + 8 + Self.labelHeight, alignment: .topLeading)
-                .overlay(alignment: .topLeading) { texts(buckets, slot: slot, total: total, top: top) }
+                // One stack with an alignment: without it the texts are centred on the widest text, not on their bars.
+                .overlay(alignment: .topLeading) {
+                    ZStack(alignment: .topLeading) { texts(buckets, slot: slot, total: total, top: top) }
+                }
+                .padding(.horizontal, 4)
             }
             .defaultScrollAnchor(.trailing)   // the latest bars first
             .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
             .scrollIndicatorsFlash(onAppear: true)
             .id("\(granularity.rawValue) \(data.range.lowerBound.index) \(data.range.upperBound.index)")
             if let goal {
-                goalLine(goal, y: Self.plotHeight * CGFloat(1 - goal / top), width: width)
+                let y = Self.plotHeight * CGFloat(1 - goal / top)
+                // The label is at the right end of the line. It goes to the left end when the time
+                // above the bar in progress is in its place.
+                let clash = buckets.indices.last { buckets[$0].current && buckets[$0].seconds > 0 }.map { index in
+                    let barTop = Self.plotHeight * CGFloat(1 - buckets[index].seconds / top)
+                    return (CGFloat(buckets.count - index) - 0.5) * slot < 120 && barTop - 20 < y - 4 && y - 24 < barTop - 2
+                } ?? false
+                goalLine(goal, y: y, width: width, leading: clash)
             }
         }
     }
@@ -428,7 +460,8 @@ struct ReportsView: View {
     @ViewBuilder private func texts(_ buckets: [Bucket], slot: CGFloat, total: CGFloat, top: TimeInterval) -> some View {
         ForEach(axisLabels(buckets, slot: slot, total: total)) { label in
             VStack(spacing: 0) {
-                Text(label.top).font(WP.font(12, .semibold)).foregroundStyle(label.current ? WP.textBlue : WP.ink)
+                Text(label.top).font(WP.font(12, label.current ? .bold : label.muted ? .medium : .semibold))
+                    .foregroundStyle(label.current ? WP.textBlue : label.muted ? WP.secondary : WP.ink)
                 Text(label.bottom).font(WP.font(11, label.current ? .bold : .regular))
                     .foregroundStyle(label.current ? WP.textBlue : WP.secondary)
             }
@@ -459,7 +492,7 @@ struct ReportsView: View {
         let order = buckets.indices.filter { buckets[$0].current } + buckets.indices.filter { !buckets[$0].current }
         for index in order where !buckets[index].top.isEmpty {
             let bucket = buckets[index]
-            var label = AxisLabel(id: bucket.id, top: bucket.top, bottom: bucket.bottom, current: bucket.current)
+            var label = AxisLabel(id: bucket.id, top: bucket.top, bottom: bucket.bottom, current: bucket.current, muted: bucket.muted)
             label.x = Self.place(center: (CGFloat(index) + 0.5) * slot, width: label.width, total: total)
             if !placed.contains(where: { $0.x < label.x + label.width && label.x < $0.x + $0.width }) { placed.append(label) }
         }
@@ -467,7 +500,7 @@ struct ReportsView: View {
     }
 
     /// The daily goal: a dashed line with its value in words.
-    @ViewBuilder private func goalLine(_ goal: TimeInterval, y: CGFloat, width: CGFloat) -> some View {
+    @ViewBuilder private func goalLine(_ goal: TimeInterval, y: CGFloat, width: CGFloat, leading: Bool) -> some View {
         Path { path in
             path.move(to: CGPoint(x: 0, y: y))
             path.addLine(to: CGPoint(x: width, y: y))
@@ -478,6 +511,7 @@ struct ReportsView: View {
         Text("Goal \(Fmt.duration(goal))").font(WP.font(11, .semibold)).monospacedDigit().foregroundStyle(.white)
             .padding(.horizontal, 8).padding(.vertical, 1)
             .background(WP.navy, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .frame(width: width, alignment: leading ? .leading : .trailing)
             .offset(y: y - 22)
             .allowsHitTesting(false)
             .accessibilityHidden(true)   // the chart label says the goal
@@ -517,7 +551,7 @@ struct ReportsView: View {
     /// a short card beside a long card leaves an empty area.
     private var balanced: Bool {
         // ponytail: heights are estimates from the row counts; measure the cards if the rows change.
-        let apps = 82 + 46 * max(1, appRows.count), goals = 127 + 38 * goalRows.count
+        let apps = 79 + 48 * max(1, appRows.count), goals = 133 + 37 * goalRows.count
         return abs(apps - goals) <= 80
     }
 
@@ -553,7 +587,9 @@ struct ReportsView: View {
                     .accessibilityLabel(row.key)
                     .accessibilityValue("\(Fmt.duration(row.seconds)), \(percent) percent")
                 }
+                // At the bottom of the card: on one line with the note of the goal card beside it.
                 Text("Total \(Fmt.duration(total)) of work").font(WP.font(12)).monospacedDigit().foregroundStyle(WP.caption)
+                    .frame(maxHeight: .infinity, alignment: .bottomLeading)
             } else {
                 emptyText("No work is recorded for this period.")
             }
@@ -699,7 +735,7 @@ struct ReportsView: View {
     }
 
     private func columnTitle(_ text: String) -> some View {
-        Text(text).font(WP.font(12, .medium)).foregroundStyle(WP.caption).padding(.bottom, 6)
+        Text(text).font(WP.font(12, .medium)).foregroundStyle(WP.caption).padding(.vertical, 6)
     }
 
     private var rowLine: some View {
@@ -726,16 +762,15 @@ private struct Segments<Value: Hashable>: View {
             ForEach(options, id: \.value) { option in
                 let on = option.value == selection
                 Button { selection = option.value } label: {
-                    // Both states have the width of the selected state, so the control does not change size.
+                    // All segments have the width of the widest selected state: the columns are equal
+                    // and the control does not change size.
                     ZStack {
-                        HStack(spacing: 5) {
-                            Image(systemName: "checkmark").font(.system(size: 10, weight: .heavy))
-                            Text(option.title).font(WP.font(13, .semibold))
+                        ForEach(options, id: \.value) { checked($0.title).hidden() }
+                        if on { checked(option.title) } else {
+                            Text(option.title).font(WP.font(13, .medium)).foregroundStyle(WP.secondary)
                         }
-                        .foregroundStyle(WP.ink).opacity(on ? 1 : 0)
-                        Text(option.title).font(WP.font(13, .medium)).foregroundStyle(WP.secondary).opacity(on ? 0 : 1)
                     }
-                    .padding(.horizontal, 10)
+                    .padding(.horizontal, 12)
                     .frame(height: 28)
                     .background {
                         if on {
@@ -755,5 +790,13 @@ private struct Segments<Value: Hashable>: View {
         .fixedSize()
         .accessibilityElement(children: .contain)
         .accessibilityLabel(label)
+    }
+
+    private func checked(_ title: String) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: "checkmark").font(.system(size: 10, weight: .heavy))
+            Text(title).font(WP.font(13, .semibold))
+        }
+        .foregroundStyle(WP.ink)
     }
 }

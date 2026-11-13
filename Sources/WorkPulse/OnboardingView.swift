@@ -16,13 +16,18 @@ struct OnboardingView: View {
     @State private var ticked: Set<String> = []
     @State private var launchAtLogin = true
 
-    private static let rowHeight: CGFloat = 54
+    /// The height of one row in the application list.
+    private static let rowHeight: CGFloat = 58
+
+    /// The size of the onboarding window. The view fills it: the window is the dialog card of the design.
+    /// The height is what step 2 needs when No schedule is On (the tallest state), plus 4 pt.
+    static let size = NSSize(width: 640, height: 624)
 
     /// `step` selects the first step shown (0…3); snapshots use it.
     init(step: Int = 0) { _step = State(initialValue: step) }
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: 20) {
             header
             Group {
                 switch step {
@@ -32,86 +37,90 @@ struct OnboardingView: View {
                 default: ready
                 }
             }
-            .padding(.top, 10).padding(.bottom, 12)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)   // each step is centred between header and footer
             footer
         }
-        .padding(.horizontal, 40).padding(.bottom, 18)
-        .frame(width: 760, height: 640)
-        // The layout owns the whole window, title bar included: `header` is the title bar row.
-        // If the window is ever taller, the content stays at the top, in line with the window buttons.
-        .frame(maxHeight: .infinity, alignment: .top)
-        .background { ZStack { Glass(); Wallpaper().opacity(0.85) }.ignoresSafeArea() }
+        // 28 pt on all sides: the header starts right of and below the close button (x 13…27, y 6…20).
+        .padding(28)
+        .frame(width: Self.size.width, height: Self.size.height)
+        .background { Backdrop() }
         .ignoresSafeArea()
         .onAppear(perform: load)
     }
 
     // MARK: - Frame
 
-    /// The title bar row (28 pt), to the right of the window buttons.
     private var header: some View {
-        HStack(spacing: 8) {
-            Image(nsImage: NSApp.applicationIconImage).resizable().frame(width: 20, height: 20).accessibilityHidden(true)
-            Text("WorkPulse").font(WP.font(15, .bold)).tracking(-0.2).foregroundStyle(WP.ink)
+        HStack(spacing: 10) {
+            Image(nsImage: NSApp.applicationIconImage).resizable().interpolation(.high).frame(width: 32, height: 32)
+                .accessibilityHidden(true)
+            Text("WorkPulse").font(WP.font(15, .bold)).tracking(-0.15).foregroundStyle(WP.ink)
             Spacer(minLength: 12)
             Text("Step \(step + 1) of 4").font(WP.font(12, .semibold)).monospacedDigit().foregroundStyle(WP.secondary)
             HStack(spacing: 5) {
                 ForEach(0..<4, id: \.self) { index in
-                    Capsule().fill(index <= step ? WP.cobalt : WP.track).frame(width: index == step ? 22 : 6, height: 6)
+                    Capsule().fill(index <= step ? WP.cobalt : WP.sliderTrack).frame(width: index == step ? 22 : 6, height: 6)
                 }
             }
             .animation(reduceMotion ? nil : WP.spring, value: step)
             .accessibilityHidden(true)   // "Step n of 4" says the same in text
         }
-        .padding(.leading, 38)   // clears the window buttons
-        .frame(height: 28)
     }
 
     private var footer: some View {
         HStack(spacing: 12) {
             if step > 0 {
-                Button { step -= 1 } label: { Text("Back").frame(minWidth: 72) }
-                    .buttonStyle(WPButtonStyle(height: 40, radius: 10))
-                    .keyboardShortcut("[", modifiers: .command)
-            }
-            ZStack {
-                if step == 1 && !schedule.enabled {
-                    Label("WorkPulse stays in Personal until you select Start work.", systemImage: "info.circle.fill")
-                        .font(WP.font(12)).foregroundStyle(WP.secondary)
+                Button { step -= 1 } label: {
+                    Text("Back").font(WP.font(14, .medium)).frame(minWidth: 72)   // 96 pt with the padding of the style
                 }
+                .buttonStyle(WPButtonStyle(height: 40, radius: 10))
+                .keyboardShortcut("[", modifiers: .command)
             }
-            .frame(maxWidth: .infinity)
+            Spacer(minLength: 0)
             Button {
                 if step < 3 { step += 1 } else { finish() }
             } label: {
                 HStack(spacing: 8) {
-                    if step == 3 { Image(systemName: "play.fill").font(WP.font(11)).accessibilityHidden(true) }
+                    if step == 3 { Image(systemName: "play.fill").font(WP.font(12)).accessibilityHidden(true) }
                     Text(step == 3 ? "Start WorkPulse" : "Continue")
                 }
-                .frame(minWidth: step == 3 ? 136 : 108)
+                .frame(minWidth: step == 3 ? 116 : 88).padding(.horizontal, 10)   // 160 and 132 pt at the least
             }
             .buttonStyle(WPButtonStyle(kind: .primary, height: 40, radius: 10))
+            .shadow(color: WP.cobalt.opacity(step == 3 ? 0.3 : 0.25), radius: 5, y: 4)
             .keyboardShortcut(.defaultAction)
         }
-        .padding(.top, 12)
+        .padding(.top, 16)
         .overlay(alignment: .top) { line }
     }
 
     private var line: some View { Rectangle().fill(WP.hairline).frame(height: 1) }
 
+    /// The title of a step with one paragraph below it.
+    private func heading(_ title: String, _ text: String, large: Bool = false) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title).font(WP.font(large ? 32 : 24, .bold)).tracking(large ? -0.64 : -0.48).foregroundStyle(WP.ink)
+                .accessibilityAddTraits(.isHeader)
+            Text(text).font(WP.font(large ? 15 : 14)).lineSpacing(3).foregroundStyle(WP.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// A square with a symbol. The text colour belongs to the fill colour.
+    private func tile(_ symbol: String, fill: Color = WP.cobalt, ink: Color = WP.onCobalt, size: CGFloat = 34) -> some View {
+        Image(systemName: symbol).font(WP.font(size >= 40 ? 19 : 15, .semibold)).foregroundStyle(ink)
+            .frame(width: size, height: size)
+            .background(fill, in: RoundedRectangle(cornerRadius: size >= 40 ? 10 : 8, style: .continuous))
+            .accessibilityHidden(true)
+    }
+
     // MARK: - Step 1: welcome
 
     private var welcome: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Spacer(minLength: 0)
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Welcome to WorkPulse").font(WP.font(32, .bold)).tracking(-0.6).foregroundStyle(WP.ink)
-                    .accessibilityAddTraits(.isHeader)
-                Text("WorkPulse counts your work time. It also tells you when you can stop.")
-                    .font(WP.font(15)).foregroundStyle(WP.secondary)
-            }
-            .wpRise(0)
-            Spacer(minLength: 12)
+        VStack(alignment: .leading, spacing: 20) {
+            heading("Welcome to WorkPulse", "WorkPulse counts your work time. It also tells you when you can stop.", large: true)
+                .wpRise(0)
             VStack(spacing: 10) {
                 feature("stopwatch", WP.cobalt, WP.onCobalt, "It counts work automatically",
                         "In work hours, time in your work applications counts as work.")
@@ -121,20 +130,22 @@ struct OnboardingView: View {
                         "No account. No network. No keys, screen content, tabs, or URLs.")
             }
             .wpRise(1)
-            Spacer(minLength: 12)
             VStack(alignment: .leading, spacing: 8) {
                 menuBarPicture
-                menuBarPointer
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Image(systemName: "arrow.up.right").font(WP.font(13, .bold)).foregroundStyle(WP.textBlue).accessibilityHidden(true)
+                    Text("WorkPulse is in the menu bar, at the top of your screen. Select the WorkPulse item to open it.")
+                        .font(WP.font(14)).lineSpacing(3).foregroundStyle(WP.secondary).fixedSize(horizontal: false, vertical: true)
+                }
             }
             .wpRise(2)
-            Spacer(minLength: 0)
         }
     }
 
     private func feature(_ symbol: String, _ fill: Color, _ ink: Color, _ title: String, _ text: String) -> some View {
         HStack(spacing: 14) {
             tile(symbol, fill: fill, ink: ink, size: 40)
-            VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 3) {
                 Text(title).font(WP.font(14, .semibold)).foregroundStyle(WP.ink)
                 Text(text).font(WP.font(14)).foregroundStyle(WP.secondary).fixedSize(horizontal: false, vertical: true)
             }
@@ -142,13 +153,6 @@ struct OnboardingView: View {
         }
         .wpCard(padding: 14, strong: true)
         .accessibilityElement(children: .combine)
-    }
-
-    private func tile(_ symbol: String, fill: Color = WP.cobalt, ink: Color = WP.onCobalt, size: CGFloat = 34) -> some View {
-        Image(systemName: symbol).font(WP.font(size >= 40 ? 20 : 15, .semibold)).foregroundStyle(ink)
-            .frame(width: size, height: size)
-            .background(fill, in: RoundedRectangle(cornerRadius: size / 4, style: .continuous))
-            .accessibilityHidden(true)
     }
 
     /// The right end of the menu bar with the real WorkPulse item (the same symbol and text) and the real time.
@@ -161,10 +165,13 @@ struct OnboardingView: View {
             }
             .font(WP.font(13, .semibold)).foregroundStyle(WP.ink)
             .padding(.horizontal, 8).frame(height: 24)
-            .background(WP.hover, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .background(WP.track, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+            // The ring that points at the item: 2 pt of the field colour, then 2 pt cobalt.
+            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(WP.field, lineWidth: 2).padding(-2))
             .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(WP.cobalt, lineWidth: 2).padding(-4))
             TimelineView(.everyMinute) { context in
-                Text("\(context.date.formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated)))  \(Fmt.time(context.date))")
+                // As in the menu bar: "Thu 12 Nov", without a comma.
+                Text("\(context.date.formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated)).replacingOccurrences(of: ",", with: ""))  \(Fmt.time(context.date))")
                     .font(WP.font(13, .medium)).monospacedDigit().foregroundStyle(WP.secondary)
             }
         }
@@ -175,45 +182,138 @@ struct OnboardingView: View {
         .accessibilityLabel("The menu bar, with the WorkPulse item")
     }
 
-    private var menuBarPointer: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Image(systemName: "arrow.up.right").font(WP.font(12, .bold)).foregroundStyle(WP.textBlue).accessibilityHidden(true)
-            Text("WorkPulse is in the menu bar, at the top of your screen. Select the WorkPulse item to open it.")
-                .font(WP.font(14)).foregroundStyle(WP.secondary).fixedSize(horizontal: false, vertical: true)
-        }
-    }
-
     // MARK: - Step 2: work day
 
     private var workDay: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            ScreenHeader(title: "Set your work day",
-                         subtitle: "WorkPulse has two profiles. In Work, it counts work time. In Personal, it counts no work time.")
+        let off = !schedule.enabled
+        return VStack(alignment: .leading, spacing: 18) {
+            heading("Set your work day",
+                    "WorkPulse has two profiles. In Work, it counts work time. In Personal, it counts no work time.")
                 .wpRise(0)
-            WorkDayEditor(schedule: $schedule, goal: $goal, firstWeekday: model.settings.firstWeekday)
-                .wpCard(padding: 12, strong: true)
-                .wpRise(1)
+            HStack(alignment: .center, spacing: 20) {
+                VStack(spacing: 6) {
+                    WorkDial(start: $schedule.startMinutes, end: $schedule.endMinutes, onCommit: clampGoal)
+                    // No hint while the dial is off: nothing can be dragged, and the note below needs the room.
+                    if !off { Text("Drag the arc or a handle.").font(WP.font(12)).foregroundStyle(WP.caption) }
+                }
+                .disabled(off).opacity(off ? 0.45 : 1)
+                VStack(alignment: .leading, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        FieldLabel("Work days")
+                        dayChips
+                            .accessibilityElement(children: .contain)
+                            .accessibilityLabel("Work days")
+                    }
+                    .disabled(off).opacity(off ? 0.45 : 1)
+                    HStack(spacing: 12) {
+                        timeField("Start", $schedule.startMinutes, other: schedule.endMinutes)
+                        timeField("End", $schedule.endMinutes, other: schedule.startMinutes)
+                    }
+                    .disabled(off).opacity(off ? 0.45 : 1)
+                    goalSlider
+                }
+            }
+            .wpCard(padding: 16, strong: true)
+            .wpRise(1)
+            Toggle(isOn: Binding(get: { !schedule.enabled }, set: { schedule.enabled = !$0; clampGoal() })) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("No schedule").font(WP.font(14, .semibold)).foregroundStyle(WP.ink)
+                    Text("You start and end work with a button.").font(WP.font(13)).foregroundStyle(WP.secondary)
+                }
+            }
+            .toggleStyle(WPSwitchStyle())
+            .padding(.horizontal, 4)
+            .wpRise(2)
+            if off { Note(text: "WorkPulse stays in Personal until you select Start work.") }
+        }
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.25), value: off)
+    }
+
+    /// The work-day buttons of this step: 44 pt high, with the check mark above the name.
+    /// (`DayChips` puts the check mark beside the name; seven of those do not fit in this column.)
+    private var dayChips: some View {
+        HStack(spacing: 4) {
+            ForEach((0..<7).map { (model.settings.firstWeekday - 1 + $0) % 7 + 1 }, id: \.self) { day in
+                let on = schedule.days.contains(day)
+                Button {
+                    // At least one work day stays selected.
+                    if !on { schedule.days.insert(day) } else if schedule.days.count > 1 { schedule.days.remove(day) }
+                } label: {
+                    VStack(spacing: 1) {
+                        if on { Image(systemName: "checkmark").font(.system(size: 9, weight: .heavy)) }
+                        Text(Calendar.current.shortWeekdaySymbols[day - 1]).font(WP.font(12, on ? .semibold : .medium))
+                    }
+                    .foregroundStyle(on ? Color.white : WP.secondary)
+                    .frame(maxWidth: .infinity, minHeight: 44)
+                    .background(on ? WP.cobalt : WP.field, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(on ? WP.cobalt : WP.border))
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(Calendar.current.weekdaySymbols[day - 1])
+                .accessibilityAddTraits(on ? .isSelected : [])
+            }
         }
     }
 
-    /// The goal as the editor shows it: never longer than the work hours.
-    private var shownGoal: Int {
-        min(max(30, goal), schedule.enabled ? max(30, schedule.lengthMinutes / 30 * 30) : 720)
+    /// Start or End as a time field. Start and End must differ.
+    private func timeField(_ label: String, _ minutes: Binding<Int>, other: Int) -> some View {
+        let date = Binding<Date>(
+            get: { Calendar.current.date(bySettingHour: minutes.wrappedValue / 60, minute: minutes.wrappedValue % 60, second: 0, of: Date()) ?? Date() },
+            set: { value in
+                let c = Calendar.current.dateComponents([.hour, .minute], from: value)
+                let m = (c.hour ?? 0) * 60 + (c.minute ?? 0)
+                guard m != other else { return }
+                minutes.wrappedValue = m
+                clampGoal()
+            })
+        return VStack(alignment: .leading, spacing: 4) {
+            FieldLabel(label)
+            HStack(spacing: 0) {
+                WPDateField(selection: date, elements: .hourMinute, size: 15, weight: .semibold).accessibilityLabel(label)
+                Spacer(minLength: 0)
+            }
+            .wpField(height: 40, radius: 10)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
+
+    private var goalSlider: some View {
+        let length = schedule.lengthMinutes
+        return VStack(alignment: .leading, spacing: 2) {
+            HStack(alignment: .firstTextBaseline) {
+                FieldLabel("Daily goal")
+                Spacer()
+                Text(Fmt.minutes(shownGoal)).font(WP.font(15, .bold)).monospacedDigit().foregroundStyle(WP.ink)
+            }
+            WPSlider(value: Binding(get: { shownGoal }, set: { goal = $0 }), range: 30...goalMax, step: 30,
+                     label: "Daily goal", valueText: Fmt.minutes(shownGoal))
+            if schedule.enabled {   // with No schedule there are no work hours to compare with
+                Text(shownGoal >= length ? "This leaves no time for breaks." : "This leaves \(Fmt.minutes(length - shownGoal)) for breaks.")
+                    .font(WP.font(12)).monospacedDigit().foregroundStyle(WP.secondary)
+            }
+        }
+    }
+
+    /// The goal is at most the length of the work hours (12 hours with No schedule), in steps of 30 minutes.
+    private var goalMax: Int { schedule.enabled ? max(30, schedule.lengthMinutes / 30 * 30) : 720 }
+    private var shownGoal: Int { min(max(30, goal), goalMax) }
+    private func clampGoal() { goal = shownGoal }
 
     // MARK: - Step 3: work applications
 
     private var applications: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            ScreenHeader(title: "Select your work applications",
-                         subtitle: "In the Work profile, time in these applications counts as work. You can change this later in Apps.")
+        VStack(alignment: .leading, spacing: 18) {
+            heading("Select your work applications",
+                    "In the Work profile, time in these applications counts as work. You can change this later in Apps.")
                 .wpRise(0)
             ScrollView {
                 LazyVStack(spacing: 0) {
                     ForEach(apps) { app in appRow(app) }
                 }
             }
-            .frame(maxHeight: CGFloat(apps.count) * Self.rowHeight)   // a short list does not leave an empty card
+            // A short list does not leave an empty card. A long list shows half of its fifth row: there is more to scroll to.
+            .frame(maxHeight: min(CGFloat(apps.count), 4.5) * Self.rowHeight)
             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             .wpCard(padding: 0, strong: true)
             .accessibilityElement(children: .contain)
@@ -224,26 +324,37 @@ struct OnboardingView: View {
         }
     }
 
+    /// One application with its switch. The words Work and Not work say the state (`WPSwitchStyle` says On and Off).
     private func appRow(_ app: AppRow) -> some View {
-        Toggle(isOn: Binding(get: { ticked.contains(app.id) },
-                             set: { if $0 { ticked.insert(app.id) } else { ticked.remove(app.id) } })) {
-            HStack(spacing: 12) {
-                if let icon = app.icon {
-                    Image(nsImage: icon).resizable().frame(width: 34, height: 34).accessibilityHidden(true)
-                } else {
-                    AppTile(name: app.name, size: 34)
-                }
-                VStack(alignment: .leading, spacing: 0) {
-                    Text(app.name).font(WP.font(14, .semibold)).foregroundStyle(WP.ink).lineLimit(1)
-                    Text(Browsers.isBrowser(app.id) ? "Browser" : app.running ? "Open now" : "Used before")
-                        .font(WP.font(12)).foregroundStyle(WP.caption)
-                }
+        let on = ticked.contains(app.id)
+        let toggle = { if on { _ = ticked.remove(app.id) } else { _ = ticked.insert(app.id) } }
+        return HStack(spacing: 12) {
+            if let icon = app.icon {
+                Image(nsImage: icon).resizable().interpolation(.high).frame(width: 34, height: 34).accessibilityHidden(true)
+            } else {
+                AppTile(name: app.name, size: 34)
+            }
+            VStack(alignment: .leading, spacing: 3) {
+                Text(app.name).font(WP.font(14, .semibold)).foregroundStyle(WP.ink).lineLimit(1)
+                Text(Browsers.isBrowser(app.id) ? "Browser" : app.running ? "Open now" : "Used before")
+                    .font(WP.font(12)).foregroundStyle(WP.caption)
+            }
+            Spacer(minLength: 0)
+            HStack(spacing: 8) {
+                Text(on ? "Work" : "Not work").font(WP.font(13, .semibold)).foregroundStyle(WP.secondary)
+                    .frame(minWidth: 62, alignment: .trailing).accessibilityHidden(true)
+                WPSwitch(isOn: Binding(get: { on }, set: { _ in toggle() }))
             }
         }
-        .toggleStyle(WPSwitchStyle())
         .padding(.horizontal, 14)
         .frame(height: Self.rowHeight)
+        .contentShape(Rectangle())
+        .onTapGesture(perform: toggle)
         .overlay(alignment: .top) { if app.id != apps.first?.id { line } }
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityValue(on ? "Work" : "Not work")
+        .accessibilityAction(.default, toggle)
     }
 
     /// The running applications and the installed applications that WorkPulse saw before, without WorkPulse.
@@ -271,48 +382,41 @@ struct OnboardingView: View {
 
     private var ready: some View {
         let work = apps.filter { ticked.contains($0.id) }
-        return VStack(alignment: .leading, spacing: 0) {
-            Spacer(minLength: 0)
-            ScreenHeader(title: "You are ready", subtitle: "You can change all settings later.").wpRise(0)
-            Spacer(minLength: 12)
+        return VStack(alignment: .leading, spacing: 18) {
+            heading("You are ready", "You can change all settings later.").wpRise(0)
             VStack(spacing: 0) {
-                recap("calendar", "Work days", Self.daysText(schedule.days, firstWeekday: model.settings.firstWeekday))
-                line
                 recap("clock", "Work hours", schedule.enabled
-                      ? "\(Fmt.time(minutes: schedule.startMinutes)) to \(Fmt.time(minutes: schedule.endMinutes))\(schedule.endMinutes < schedule.startMinutes ? ", next day" : "")"
+                      ? "\(Self.daysText(schedule.days, firstWeekday: model.settings.firstWeekday)), \(Fmt.time(minutes: schedule.startMinutes)) to \(Fmt.time(minutes: schedule.endMinutes))\(schedule.endMinutes < schedule.startMinutes ? ", next day" : "")"
                       : "No schedule. You start work with a button.")
                 line
-                recap("target", "Daily goal", "\(Fmt.minutes(shownGoal)) of work for each work day")
-                line
                 recap("square.grid.2x2", "Work applications",
-                      work.isEmpty ? "None. You can add them later in Apps." : work.count == 1 ? "1 application" : "\(work.count) applications",
-                      detail: work.isEmpty ? nil : work.map(\.name).joined(separator: ", "))
+                      work.isEmpty ? "None. You can add them later in Apps." : work.map(\.name).joined(separator: ", "))
+                line
+                recap("target", "Daily goal", "\(Fmt.minutes(shownGoal)) of work for each work day")
             }
             .wpCard(padding: 0, strong: true)
             .wpRise(1)
-            Spacer(minLength: 12)
             Toggle(isOn: $launchAtLogin) {
-                VStack(alignment: .leading, spacing: 0) {
+                VStack(alignment: .leading, spacing: 3) {
                     Text("Launch at login").font(WP.font(14, .semibold)).foregroundStyle(WP.ink)
                     Text("WorkPulse starts when you log in to this Mac.").font(WP.font(13)).foregroundStyle(WP.secondary)
                 }
             }
             .toggleStyle(WPSwitchStyle())
-            .wpCard(padding: 14, strong: true)
+            .padding(.horizontal, 16).padding(.vertical, 14)
+            .wpCard(padding: 0, strong: true)
             .wpRise(2)
-            Spacer(minLength: 12)
-            menuBarPointer.wpRise(3)
-            Spacer(minLength: 0)
         }
     }
 
-    private func recap(_ symbol: String, _ label: String, _ value: String, detail: String? = nil) -> some View {
+    private func recap(_ symbol: String, _ label: String, _ value: String) -> some View {
         HStack(spacing: 12) {
             tile(symbol)
-            VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 3) {
                 FieldLabel(label)
-                Text(value).font(WP.font(14, .semibold)).monospacedDigit().foregroundStyle(WP.ink)
-                if let detail { Text(detail).font(WP.font(12)).foregroundStyle(WP.caption).lineLimit(1) }
+                // ponytail: a long list of applications stops after three lines; the Apps screen shows all of them.
+                Text(value).font(WP.font(14, .semibold)).monospacedDigit().foregroundStyle(WP.ink).lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 0)
         }
@@ -320,14 +424,14 @@ struct OnboardingView: View {
         .accessibilityElement(children: .combine)
     }
 
-    /// "Mon to Fri" for three or more days in a row, "Each day" for all seven, else "Mon, Wed".
+    /// "Mon to Fri" for three or more days in a row, "each day" for all seven, else "Mon, Wed".
     /// Days are 1 = Sunday … 7 = Saturday, shown in the order of the user's week.
     static func daysText(_ days: Set<Int>, firstWeekday: Int) -> String {
         let order = (0..<7).map { (firstWeekday - 1 + $0) % 7 + 1 }
         let on = order.indices.filter { days.contains(order[$0]) }
         let names = on.map { Calendar.current.shortWeekdaySymbols[order[$0] - 1] }
         guard let first = on.first, let last = on.last else { return "None" }
-        if on.count == 7 { return "Each day" }
+        if on.count == 7 { return "each day" }
         if on.count > 2 && last - first + 1 == on.count { return "\(names[0]) to \(names[names.count - 1])" }
         return names.joined(separator: ", ")
     }

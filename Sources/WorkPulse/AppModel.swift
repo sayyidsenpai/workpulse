@@ -14,12 +14,12 @@ enum MainTab: String, CaseIterable, Identifiable {
 
     var symbol: String {
         switch self {
-        case .history: "list.bullet.rectangle"
+        case .history: "list.bullet"
         case .reports: "chart.bar"
         case .work: "briefcase"
         case .rules: "square.grid.2x2"
         case .sleep: "moon"
-        case .settings: "gearshape"
+        case .settings: "slider.horizontal.3"
         }
     }
 }
@@ -223,6 +223,7 @@ final class AppModel {
         suggestion = status == .personal && evidence >= Self.suggestionMinutes && settings.suggestionMutedDay != today.index
             ? Suggestion(app: engine.evidenceApp ?? "a work application", minutes: evidence) : nil
         refreshAgents()
+        applyTheme()
         let reached = summary.day?.targetSeconds.map { $0 > 0 && summary.today.work >= $0 } ?? false
         if goalWasReached == false && reached { Sounds.play(.goal, mode: settings.sounds) }
         goalWasReached = reached
@@ -230,6 +231,16 @@ final class AppModel {
     }
 
     var goalReached: Bool { goalWasReached ?? false }
+
+    /// Light, dark, or the appearance of macOS, for every WorkPulse window and the popover.
+    private func applyTheme() {
+        let wanted: NSAppearance? = switch settings.theme {
+        case .system: nil
+        case .light: NSAppearance(named: .aqua)
+        case .dark: NSAppearance(named: .darkAqua)
+        }
+        if NSApp.appearance?.name != wanted?.name { NSApp.appearance = wanted }
+    }
 
     /// Per-day totals for a range of local days, optionally for one profile only.
     func totals(days: ClosedRange<LocalDay>, projectID: Int64? = nil) -> [LocalDay: DayTotals] {
@@ -498,7 +509,7 @@ final class AppModel {
 
     func showOnboarding() {
         if onboardingWindow == nil {
-            onboardingWindow = glassWindow(OnboardingView().environment(self), size: NSSize(width: 760, height: 640), resizable: false)
+            onboardingWindow = glassWindow(OnboardingView().environment(self), size: OnboardingView.size, resizable: false)
         }
         NSApp.activate(ignoringOtherApps: true)
         onboardingWindow?.makeKeyAndOrderFront(nil)

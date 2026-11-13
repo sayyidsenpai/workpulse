@@ -29,6 +29,11 @@ public enum SoundMode: String, Codable, CaseIterable, Sendable {
     case off, goalAndHours, all
 }
 
+/// Light or dark appearance. `system` follows macOS.
+public enum Theme: String, Codable, CaseIterable, Sendable {
+    case system, light, dark
+}
+
 /// Work hours: the times at which the Work profile starts and ends by itself.
 ///
 /// All arithmetic is in "local seconds": seconds since 1970 in the wall-clock time of the Mac
@@ -319,6 +324,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
     /// After work hours, the Work profile ends after this many minutes without input.
     public var returnIdleMinutes = 15
     public var sounds = SoundMode.goalAndHours
+    public var theme = Theme.system
     public var onboarded = false
     /// The last work-hours boundaries (local seconds) that were already acted on, so each acts once.
     public var lastStartApplied: Double = 0
@@ -347,6 +353,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         notifyWorkEnd = c.value(.notifyWorkEnd, notifyWorkEnd)
         returnIdleMinutes = c.value(.returnIdleMinutes, returnIdleMinutes)
         sounds = c.value(.sounds, sounds)
+        theme = c.value(.theme, theme)
         onboarded = c.value(.onboarded, onboarded)
         lastStartApplied = c.value(.lastStartApplied, lastStartApplied)
         lastEndApplied = c.value(.lastEndApplied, lastEndApplied)

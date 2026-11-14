@@ -29,7 +29,9 @@ input.
 Work hours (Work screen) are optional: work days, Start and End. They act only at the two
 boundaries, and a choice you make by hand holds between them.
 
-- At Start, WorkPulse changes to the Work profile.
+- At Start, WorkPulse changes to the Work profile and shows one quiet notification: "Work hours
+  started at 08.00". It asks nothing and has no sound. Point at it to see a "Day off" button.
+  Settings › Tracking › "Tell me when work hours start" turns it off.
 - At End, if you still work (or an agent still works for you), WorkPulse continues, plays one
   chime and shows one notification with an "End work" button. This time is **overtime**. If you
   are away at End, WorkPulse changes to Personal without a word.
@@ -38,6 +40,19 @@ boundaries, and a choice you make by hand holds between them.
 - In Personal, WorkPulse asks "Is this work?" only with evidence: 12 minutes in work
   applications. "Start work" moves those minutes to work; "Not work" stops the question for the
   day. Nothing is ever counted without a recorded interval behind it.
+
+Days off (Work screen › Days off): holidays and leave, one day or a range, with an optional name.
+
+- On a day off there are no work hours: WorkPulse does not change to Work and sends no
+  notification. Work that you start on a day off counts as overtime.
+- The daily goal does not apply, and the week and month goals drop by one day (6h on 5 days:
+  30h becomes 24h). Reports show the day with a muted label.
+- If you notice a holiday too late, select "End work". In work hours the Personal card then asks
+  one time "Is today a day off?". The confirmation shows the work recorded today, per application.
+  "Move to Personal" makes that time non-work; "Keep as work" keeps it, as overtime. "Day off" in
+  the morning notification moves the work of today without a question.
+- Undo stays available until the next work hours start. Past days off stay in the list, so
+  earlier reports never change.
 
 Rules (Apps screen): each application gets a category (built-in Work, Non-work, Ignored,
 Uncategorized, plus your own) and an optional idle override (for example "never idle" for a video

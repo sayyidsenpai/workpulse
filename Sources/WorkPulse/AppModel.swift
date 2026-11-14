@@ -160,7 +160,9 @@ final class AppModel {
         #endif
         refresh()
         reminders.configure()
-        rescheduleReminders(requestPermission: false)
+        // The work-hours notices need permission too. macOS asks only once; later calls return at once.
+        let notices = settings.schedule.isUsable && (settings.notifyWorkStart || settings.notifyWorkEnd)
+        rescheduleReminders(requestPermission: notices)
         refreshLoginItem()
         dailyBackup()
         if !settings.onboarded && !CommandLine.arguments.contains("--snapshot") { showOnboarding() }
@@ -364,6 +366,7 @@ final class AppModel {
         confirmingDayOff = false
         offerDayOff = false
         engine.takeDayOff(moveWork: moveWork)
+        applog.notice("day off: moved \(self.settings.dayOffUndo?.moved.count ?? 0) sessions to Personal")
         reminders.clearWorkHoursStarted()
     }
 
@@ -417,6 +420,7 @@ final class AppModel {
 
     /// Work hours started and WorkPulse changed to Work: say it once, quietly, without a question.
     private func workHoursStarted() {
+        applog.notice("work hours started; changed to Work; start notice \(self.settings.notifyWorkStart ? "on" : "off", privacy: .public)")
         guard settings.notifyWorkStart else { return }
         let start = engine.lastWorkHoursStart.map(Fmt.time) ?? ""
         Task { await reminders.workHoursStarted(at: start) }

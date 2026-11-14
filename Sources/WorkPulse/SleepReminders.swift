@@ -1,8 +1,10 @@
 import Foundation
+import os
 import UserNotifications
 import WorkPulseCore
 
 private let sleepCategory = "SLEEP_REMINDER"
+private let notelog = Logger(subsystem: "com.workpulse.app", category: "notifications")
 private let snoozeAction = "SNOOZE"
 private let dismissAction = "DISMISS"
 private let snoozeID = "sleep-snooze"
@@ -60,7 +62,13 @@ final class SleepReminders: NSObject, UNUserNotificationCenterDelegate {
         content.body = "WorkPulse counts your work from now."
         content.categoryIdentifier = workStartCategory
         content.sound = nil
-        try? await center.add(UNNotificationRequest(identifier: workStartID, content: content, trigger: nil))
+        let permission = await center.notificationSettings().authorizationStatus.rawValue
+        do {
+            try await center.add(UNNotificationRequest(identifier: workStartID, content: content, trigger: nil))
+            notelog.notice("start notice posted: \(content.title, privacy: .public) (permission \(permission))")
+        } catch {
+            notelog.error("start notice failed (permission \(permission)): \(error.localizedDescription, privacy: .public)")
+        }
     }
 
     func clearWorkHoursStarted() {
@@ -139,6 +147,7 @@ final class SleepReminders: NSObject, UNUserNotificationCenterDelegate {
             return
         }
         if response.actionIdentifier == dayOffAction {
+            notelog.notice("Day off selected in the start notice")
             await MainActor.run { self.onDayOff?() }
             return
         }

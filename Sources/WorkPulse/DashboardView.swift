@@ -176,9 +176,11 @@ extension AppModel {
                         fill: WP.amber, text: WP.amberInk, sub: WP.amberInk,
                         second: HeroAction(label: "End work", symbol: "stop.fill", fill: WP.amberInk.opacity(0.16), text: WP.amberInk) { model.endWork() })
         case .paused:
+            // The break counts up, so a pause reads as a break that continues, not as a stop.
             let at = model.pausedAt ?? Date()
-            return Hero(title: "Paused", symbol: "pause.circle", label: "Paused at", big: { _ in Fmt.time(at) },
-                        note: "WorkPulse records no time until you resume.",
+            return Hero(title: "Paused", symbol: "pause.circle", label: "Break",
+                        big: { Fmt.clock(max(0, $0.timeIntervalSince(at))) }, meta: "Since \(Fmt.time(at))",
+                        note: "WorkPulse records no time now. Resume to continue work.",
                         fill: WP.slate, text: .white, sub: WP.onSlate,
                         first: HeroAction(label: "Resume", symbol: "play.fill", fill: .white, text: WP.fixedInk) { model.resume() },
                         second: HeroAction(label: "End work", symbol: "stop.fill", fill: .black.opacity(0.38), text: .white) { model.endWork() })
@@ -223,6 +225,17 @@ struct HeroAction {
     let fill: Color
     let text: Color
     let action: () -> Void
+
+    /// What the button does, as a tooltip and a VoiceOver hint. One text per button everywhere,
+    /// so Pause and End work always explain the same difference.
+    var hint: String? {
+        switch label {
+        case "Pause": "Take a break. WorkPulse records nothing until you resume."
+        case "Resume": "Continue work. WorkPulse counts again."
+        case "End work": "Stop work for today. WorkPulse changes to Personal."
+        default: nil
+        }
+    }
 }
 
 struct Hero {
@@ -275,6 +288,8 @@ struct HeroCard: View {
                         Label(action.label, systemImage: action.symbol)
                     }
                     .buttonStyle(WPButtonStyle(fill: action.fill, text: action.text, height: 40, radius: 10, expand: true))
+                    .help(action.hint ?? "")
+                    .accessibilityHint(action.hint ?? "")
                 }
             }
         }

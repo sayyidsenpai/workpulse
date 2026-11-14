@@ -105,6 +105,9 @@ final class AppModel {
     var suggestion: Suggestion?
     var agents: [AgentInfo] = []
     var pausedAt: Date?
+    /// The pause that has a break reminder scheduled, so each pause gets one reminder.
+    @ObservationIgnored private var breakReminderFor: Date?
+    static let breakReminderMinutes = 30
     var workHoursEnd: Date?
     var lastWorkHoursEnd: Date?
     var nextWorkHoursStart: Date?
@@ -141,6 +144,7 @@ final class AppModel {
         engine.onWorkHoursStarted = { [weak self] in self?.workHoursStarted() }
         reminders.onEndWork = { [weak self] in self?.endWork() }
         reminders.onDayOff = { [weak self] in self?.takeDayOff(moveWork: true) }
+        reminders.onResume = { [weak self] in self?.resume() }
         reloadReference()
         let monitor = ActivityMonitor(engine: engine)
         monitor.onTick = { [weak self] in self?.tick() }
@@ -241,7 +245,21 @@ final class AppModel {
         workHoursEnd = engine.workHoursEnd
         lastWorkHoursEnd = engine.lastWorkHoursEnd
         nextWorkHoursStart = engine.nextWorkHoursStart
-        if status != .paused { pausedAt = nil }
+        if status == .paused {
+            let start = pausedAt ?? Date()
+            pausedAt = start
+            if breakReminderFor != start {
+                breakReminderFor = start
+                reminders.scheduleBreakReminder(at: start.addingTimeInterval(Double(Self.breakReminderMinutes) * 60),
+                                                minutes: Self.breakReminderMinutes)
+            }
+        } else {
+            pausedAt = nil
+            if breakReminderFor != nil {
+                breakReminderFor = nil
+                reminders.cancelBreakReminder()
+            }
+        }
         let evidence = Int(engine.evidenceSeconds / 60)
         suggestion = status == .personal && !isDayOff && evidence >= Self.suggestionMinutes && settings.suggestionMutedDay != today.index
             ? Suggestion(app: engine.evidenceApp ?? "a work application", minutes: evidence) : nil
@@ -353,8 +371,8 @@ final class AppModel {
     }
 
     func pause() {
+        pausedAt = Date()   // before the engine refreshes the model, so the break reminder uses this time
         engine.pause()
-        pausedAt = Date()
         Sounds.play(.down, mode: settings.sounds)
     }
 

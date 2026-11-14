@@ -15,6 +15,9 @@ private let workEndID = "work-hours-ended"
 private let workStartCategory = "WORK_HOURS_STARTED"
 private let dayOffAction = "DAY_OFF"
 private let workStartID = "work-hours-started"
+private let breakCategory = "BREAK_REMINDER"
+private let resumeAction = "RESUME"
+private let breakID = "break-reminder"
 
 /// Sleep reminders as native, repeating local notifications. macOS keeps the schedule, so
 /// reminders fire even when WorkPulse is not running. This module only ever posts
@@ -29,6 +32,8 @@ final class SleepReminders: NSObject, UNUserNotificationCenterDelegate {
     var onEndWork: (() -> Void)?
     /// The user pressed "Day off" in the start-of-work-hours notification.
     var onDayOff: (() -> Void)?
+    /// The user pressed "Resume" in the break reminder.
+    var onResume: (() -> Void)?
 
     func configure() {
         guard available else { return }
@@ -40,6 +45,9 @@ final class SleepReminders: NSObject, UNUserNotificationCenterDelegate {
             UNNotificationCategory(identifier: sleepCategory, actions: [snooze, dismiss], intentIdentifiers: []),
             UNNotificationCategory(identifier: workEndCategory, actions: [endWork], intentIdentifiers: []),
             UNNotificationCategory(identifier: workStartCategory, actions: [UNNotificationAction(identifier: dayOffAction, title: "Day off")],
+                                   intentIdentifiers: []),
+            UNNotificationCategory(identifier: breakCategory,
+                                   actions: [UNNotificationAction(identifier: resumeAction, title: "Resume"), endWork],
                                    intentIdentifiers: []),
         ])
     }
@@ -69,6 +77,27 @@ final class SleepReminders: NSObject, UNUserNotificationCenterDelegate {
         } catch {
             notelog.error("start notice failed (permission \(permission)): \(error.localizedDescription, privacy: .public)")
         }
+    }
+
+    /// One reminder when a pause is long: a forgotten pause loses all work after it.
+    /// macOS keeps the schedule; `cancelBreakReminder` removes it when the pause ends.
+    func scheduleBreakReminder(at date: Date, minutes: Int) {
+        guard available else { return }
+        let content = UNMutableNotificationContent()
+        content.title = "You are on a break for \(minutes) minutes"
+        content.body = "WorkPulse records no time. Resume, or end work for today."
+        content.categoryIdentifier = breakCategory
+        content.sound = .default
+        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: max(1, date.timeIntervalSinceNow), repeats: false)
+        center.add(UNNotificationRequest(identifier: breakID, content: content, trigger: trigger)) { error in
+            if let error { notelog.error("break reminder failed: \(error.localizedDescription, privacy: .public)") }
+        }
+    }
+
+    func cancelBreakReminder() {
+        guard available else { return }
+        center.removePendingNotificationRequests(withIdentifiers: [breakID])
+        center.removeDeliveredNotifications(withIdentifiers: [breakID])
     }
 
     func clearWorkHoursStarted() {
@@ -152,6 +181,10 @@ final class SleepReminders: NSObject, UNUserNotificationCenterDelegate {
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
         if response.actionIdentifier == endWorkAction {
             await MainActor.run { self.onEndWork?() }
+            return
+        }
+        if response.actionIdentifier == resumeAction {
+            await MainActor.run { self.onResume?() }
             return
         }
         if response.actionIdentifier == dayOffAction {

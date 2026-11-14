@@ -92,7 +92,7 @@ extension AppModel {
             heroes.append(hero)
         }
         sessionStart = Date().addingTimeInterval(-2712)
-        pausedAt = Date()
+        pausedAt = Date().addingTimeInterval(-312)
         idleSince = Date().addingTimeInterval(-900)
         add(.tracking(.work))
         add(.tracking(.work), agent: true)

@@ -588,7 +588,9 @@ final class AppModel {
                                      : [.titled, .closable, .fullSizeContentView]
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
-        window.isMovableByWindowBackground = true
+        // Not movable by its background: a drag on the dial, the slider or a list would move the
+        // window instead of the control. The window moves by its top edge, as a normal window does.
+        window.isMovableByWindowBackground = false
         window.setContentSize(size)
         window.isReleasedWhenClosed = false
         window.center()

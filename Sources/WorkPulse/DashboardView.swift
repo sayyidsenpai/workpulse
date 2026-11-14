@@ -121,77 +121,70 @@ extension AppModel {
     /// One hero per state. Every state has its own colour, icon, title and sentence.
     var hero: Hero {
         let model = self
-        // The time since the last break (pause, idle, End work), across applications. The front
-        // application has its own card below, so its name is not here: the number is not per app.
-        let current = "Since your last break"
-        let start = model.sessionStart
-        let session: (Date) -> String = { now in Fmt.clock(start.map { now.timeIntervalSince($0) } ?? 0) }
-        let range = model.workHoursEnd.map { "Until \(Fmt.time($0))" } ?? start.map { "From \(Fmt.time($0))" } ?? ""
+        // In the Work profile the big number is "This session": work recorded since the work session
+        // began. It counts only while work is recorded; pause, idle and other applications stop it.
+        let session = model.summary.sessionWork, asOf = model.summary
+        let working = model.isWorking
+        let thisSession: (Date) -> String = { Fmt.clock(session + asOf.live(at: $0, working: working)) }
+        let hours = model.workHoursNote
         let goal = model.goalReached
         let pause = HeroAction(label: "Pause", symbol: "pause.fill", fill: goal ? WP.navy.opacity(0.32) : .white,
                                text: goal ? .white : WP.fixedBlue) { model.pause() }
         let end = HeroAction(label: "End work", symbol: "stop.fill", fill: goal ? .white : WP.navy.opacity(0.32),
                              text: goal ? WP.fixedBlue : .white) { model.endWork() }
+        let lightPause = HeroAction(label: "Pause", symbol: "pause.fill", fill: WP.field, text: WP.ink) { model.pause() }
+        let lightEnd = HeroAction(label: "End work", symbol: "stop.fill", fill: WP.track, text: WP.ink) { model.endWork() }
 
-        switch model.status {
-        case .tracking(.work) where model.isOvertime:
-            // All work outside work hours today, the same number as "overtime" in the Today card.
-            // A pause does not hide earlier overtime.
-            let overtime = model.summary.overtime, asOf = model.summary.asOf
-            let ended = model.lastWorkHoursEnd.flatMap { Calendar.current.isDateInToday($0) ? $0 : nil }
-            let starts = model.nextWorkHoursStart.flatMap { Calendar.current.isDateInToday($0) ? $0 : nil }
-            return Hero(title: "Overtime", symbol: "clock", live: true,
-                        label: "Overtime today",
-                        big: { Fmt.clock(overtime + max(0, $0.timeIntervalSince(asOf))) },
-                        meta: ended.map { "Work hours ended at \(Fmt.time($0))" }
-                            ?? starts.map { "Work hours start at \(Fmt.time($0))" } ?? "No work hours today",
+        switch model.headline {
+        case .overtime:
+            // All work outside work hours today, the same number as in the Today card.
+            let overtime = model.summary.overtime
+            return Hero(title: model.statusText, symbol: "clock", live: true,
+                        label: "Overtime today", big: { Fmt.clock(overtime + asOf.live(at: $0, working: working)) }, meta: hours,
                         note: "You can stop now. Make time to rest.",
                         fill: WP.navy, text: .white, sub: WP.onNavy,
                         first: HeroAction(label: "Pause", symbol: "pause.fill", fill: .white.opacity(0.16), text: .white) { model.pause() },
                         second: HeroAction(label: "End work", symbol: "stop.fill", fill: .white, text: WP.navy) { model.endWork() })
-        case .tracking(.work) where model.agentWorking:
-            return Hero(title: "\(model.engine.agent ?? "Agent") working", symbol: "terminal", live: true,
-                        label: "Agent session · counts as work", big: session, meta: range,
+        case .agent:
+            return Hero(title: model.statusText, symbol: "terminal", live: true,
+                        label: "This session", big: thisSession, meta: hours,
                         note: "An agent works for you. This time counts as work, also when you are idle.",
                         fill: WP.cobalt, text: .white, sub: WP.onCobalt, striped: true, first: pause, second: end)
-        case .tracking(.work):
-            return Hero(title: "Tracking work", symbol: "record.circle", live: true,
-                        label: current, big: session, meta: range,
+        case .tracking:
+            return Hero(title: model.statusText, symbol: "record.circle", live: true,
+                        label: "This session", big: thisSession, meta: hours,
                         fill: WP.cobalt, text: .white, sub: WP.onCobalt, first: pause, second: end)
-        case .tracking(.nonwork), .tracking(.excluded), .waiting:
-            let ignored = model.status == .tracking(.excluded)
+        case .nonwork, .ignored, .waiting:
+            let app = model.frontApp?.name ?? "this application"
             return Hero(title: model.statusText, symbol: "minus.circle",
-                        label: current, big: session, meta: range,
-                        note: ignored ? "WorkPulse does not count time in this application."
-                            : model.status == .waiting ? "WorkPulse starts to count when you use an application."
-                            : "Time in this application is not work time.",
-                        fill: WP.heroLight, text: WP.ink, sub: WP.secondary,
-                        first: HeroAction(label: "Pause", symbol: "pause.fill", fill: WP.field, text: WP.ink) { model.pause() },
-                        second: HeroAction(label: "End work", symbol: "stop.fill", fill: WP.track, text: WP.ink) { model.endWork() })
-        case .tracking(.idle), .idle:
-            return Hero(title: "Idle · auto-paused", symbol: "moon",
-                        label: model.idleSince.map { "Idle time · since \(Fmt.time($0))" } ?? "Idle time",
-                        big: { now in Fmt.clock(model.idleSince.map { now.timeIntervalSince($0) } ?? 0) },
-                        note: "Idle time is not work time. Tracking starts again when you use the Mac.",
+                        label: "This session", big: thisSession, meta: hours,
+                        note: model.headline == .ignored ? "WorkPulse does not count time in \(app)."
+                            : model.headline == .waiting ? "WorkPulse counts when you use an application."
+                            : "Time in \(app) is not work time.",
+                        fill: WP.heroLight, text: WP.ink, sub: WP.secondary, first: lightPause, second: lightEnd)
+        case .idle:
+            let since = model.idleSince
+            return Hero(title: model.statusText, symbol: "moon",
+                        label: since.map { "Idle since \(Fmt.time($0))" } ?? "Idle",
+                        big: { now in Fmt.clock(since.map { now.timeIntervalSince($0) } ?? 0) }, meta: hours,
+                        note: "Idle time is not work time. WorkPulse counts again when you use the Mac.",
                         fill: WP.amber, text: WP.amberInk, sub: WP.amberInk,
                         second: HeroAction(label: "End work", symbol: "stop.fill", fill: WP.amberInk.opacity(0.16), text: WP.amberInk) { model.endWork() })
         case .paused:
-            // The break counts up, so a pause reads as a break that continues, not as a stop.
-            let at = model.pausedAt ?? Date()
-            return Hero(title: "Paused", symbol: "pause.circle", label: "Break",
-                        big: { Fmt.clock(max(0, $0.timeIntervalSince(at))) }, meta: "Since \(Fmt.time(at))",
-                        note: "WorkPulse records no time now. Resume to continue work.",
+            let at = model.pausedAt ?? model.summary.asOf
+            return Hero(title: model.statusText, symbol: "pause.circle", label: "Break since \(Fmt.time(at))",
+                        big: { Fmt.clock(max(0, $0.timeIntervalSince(at))) }, meta: hours,
+                        note: "WorkPulse records no time now. This session continues when you resume.",
                         fill: WP.slate, text: .white, sub: WP.onSlate,
                         first: HeroAction(label: "Resume", symbol: "play.fill", fill: .white, text: WP.fixedInk) { model.resume() },
                         second: HeroAction(label: "End work", symbol: "stop.fill", fill: .black.opacity(0.38), text: .white) { model.endWork() })
-        case .personal, .stopped:
+        case .personal, .dayOff:
             let next = model.nextWorkHoursStart
-            var hero = Hero(title: "Personal", symbol: "person.crop.circle",
+            var hero = Hero(title: model.statusText, symbol: "person.crop.circle",
                             label: next == nil ? "Work hours" : "Next work hours", big: { _ in next.map(Fmt.dayTime) ?? "Not set" },
                             note: "WorkPulse does not count work time now.",
                             fill: WP.heroLight, text: WP.ink, sub: WP.secondary)
-            if model.isDayOff {
-                hero.title = "Day off"
+            if model.headline == .dayOff {
                 hero.symbol = "calendar.badge.minus"
                 let moved = model.dayOffUndo?.movedSeconds ?? 0
                 hero.note = moved >= 1 ? "Today is a day off. WorkPulse moved \(Fmt.duration(moved)) of work to Personal."
@@ -319,7 +312,7 @@ struct WorkTimeCard: View {
 
     var body: some View {
         Live { now in
-            let live = model.isWorking ? max(0, now.timeIntervalSince(model.summary.asOf)) : 0
+            let live = model.summary.live(at: now, working: model.isWorking)
             VStack(alignment: .leading, spacing: 14) {
                 today(live)
                 HStack(alignment: .top, spacing: 14) {
@@ -345,7 +338,7 @@ struct WorkTimeCard: View {
         // Whole minutes on both sides, so "2h 45m" and "3h 15m left" always add up to the goal.
         let shown = work >= 60 ? (work / 60).rounded(.down) * 60 : work.rounded(.down)
         var caption = target.map { reached ? "Goal of \(Fmt.duration($0, seconds: false)) reached" : "\(Fmt.duration($0 - shown)) left" } ?? (model.isDayOff ? "Day off. No daily goal today." : "No goal for today")
-        if overtime >= 60 { caption += " · overtime \(Fmt.duration(overtime, seconds: false))" }
+        if overtime >= 60 { caption += " · \(Fmt.duration(overtime, seconds: false)) outside work hours" }
         return VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .firstTextBaseline) {
                 Text("Today").font(WP.font(13, .semibold))
@@ -416,12 +409,13 @@ struct WorkTimeCard: View {
             .accessibilityHidden(true)
             // Every day with work counts, the same as Reports and the weekly days goal.
             let extra = days.filter(\.extra).count
-            Text("\(days.filter(\.worked).count) of \(model.summary.weekDaysTarget)")
+            let goal = model.summary.week?.daysGoal.map { " of \($0)" } ?? ""
+            Text("\(days.filter(\.worked).count)\(goal)")
                 .font(WP.font(13, .semibold)).monospacedDigit().foregroundStyle(WP.ink)
                 .help(extra > 0 ? "Includes work on \(extra) day\(extra == 1 ? "" : "s") outside your work days." : "")
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Working days this week: \(days.filter(\.worked).count) of \(model.summary.weekDaysTarget)"
+        .accessibilityLabel("Working days this week: \(days.filter(\.worked).count)\(model.summary.week?.daysGoal.map { " of \($0)" } ?? "")"
             + (days.contains(where: \.extra) ? ", including \(days.filter(\.extra).count) outside your work days" : ""))
     }
 }
@@ -433,13 +427,16 @@ struct TodayMix: View {
     var body: some View {
         let today = model.summary.today
         let agent = model.summary.agent
-        let apps = max(0, today.active - agent)
-        let total = max(1, apps + agent + today.idle)
+        // Own work + agent = Today's work. Non-work is its own part: it is never shown as work.
+        let own = max(0, today.work - agent)
+        let showAgent = model.agentConnected && agent >= 1
+        let total = max(1, today.work + today.nonwork + today.idle)
         VStack(alignment: .leading, spacing: 8) {
             GeometryReader { geo in
                 HStack(spacing: 2) {
-                    segment(apps / total, geo.size.width) { WP.cobalt }
+                    segment(own / total, geo.size.width) { WP.cobalt }
                     segment(agent / total, geo.size.width) { ZStack { WP.cobalt; Hatch(color: WP.navy, width: 2, gap: 4) } }
+                    segment(today.nonwork / total, geo.size.width) { WP.switchOff }
                     segment(today.idle / total, geo.size.width) { ZStack { WP.amber; Hatch(color: WP.amberHatch, width: 2, gap: 4) } }
                     Spacer(minLength: 0)
                 }
@@ -448,17 +445,24 @@ struct TodayMix: View {
             .background(WP.track)
             .clipShape(Capsule())
             .accessibilityHidden(true)
-            HStack(spacing: 14) {
-                legend("Applications \(Fmt.duration(apps))") { WP.cobalt }
-                if model.agentConnected && agent >= 1 {
+            let legends = Group {
+                legend("Work \(Fmt.duration(own))") { WP.cobalt }
+                if showAgent {
                     legend("Agent \(Fmt.duration(agent))") { ZStack { WP.cobalt; Hatch(color: WP.navy, width: 2, gap: 3) } }
                 }
+                if today.nonwork >= 60 { legend("Non-work \(Fmt.duration(today.nonwork))") { WP.switchOff } }
                 legend("Idle \(Fmt.duration(today.idle))") { ZStack { WP.amber; Hatch(color: WP.amberHatch, width: 2, gap: 3) } }
+            }
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 14) { legends }
+                LazyVGrid(columns: [GridItem(.flexible(), alignment: .leading), GridItem(.flexible(), alignment: .leading)],
+                          alignment: .leading, spacing: 6) { legends }
             }
         }
         .padding(.horizontal, 2)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Today: applications \(Fmt.duration(apps)), agent \(Fmt.duration(agent)), idle \(Fmt.duration(today.idle)), ignored \(Fmt.duration(today.excluded))")
+        .accessibilityLabel("Today: work \(Fmt.duration(own))" + (showAgent ? ", agent \(Fmt.duration(agent))" : "")
+            + ", non-work \(Fmt.duration(today.nonwork)), idle \(Fmt.duration(today.idle)), ignored \(Fmt.duration(today.excluded))")
     }
 
     @ViewBuilder

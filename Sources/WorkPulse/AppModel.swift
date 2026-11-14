@@ -35,10 +35,14 @@ struct Summary {
     var overtime: TimeInterval = 0
     /// Today's work time that an AI agent did.
     var agent: TimeInterval = 0
+    /// Work recorded in the current work session (see `AppSettings.workSessionStart`).
+    var sessionWork: TimeInterval = 0
     /// This week's work days and any other day with work (`extra`: not planned), in order.
     var weekDays: [(day: LocalDay, worked: Bool, off: Bool, extra: Bool)] = []
-    /// Number of work days in a week.
-    var weekDaysTarget = 0
+
+    /// Seconds of work since `asOf`, while work is being recorded. Every live number adds this,
+    /// so the popover, the hero and the menu bar always count the same way.
+    func live(at now: Date, working: Bool) -> TimeInterval { working ? max(0, now.timeIntervalSince(asOf)) : 0 }
 }
 
 /// An AI coding agent WorkPulse can detect, and whether its hook has ever reported.
@@ -79,7 +83,7 @@ final class AppModel {
     var summary = Summary()
     var status = TrackingEngine.Status.stopped
     var frontApp: TrackingEngine.FrontApp?
-    var sessionStart: Date?
+    var workSessionStart: Date?
     var idleSince: Date?
     /// Bumped whenever stored data may have changed; history and reports reload on it.
     var revision = 0
@@ -214,8 +218,9 @@ final class AppModel {
         settings = engine.settings
         status = engine.status
         frontApp = engine.frontApp
-        sessionStart = engine.sessionStart
+        workSessionStart = engine.workSessionStart
         idleSince = engine.idleSince
+        pausedAt = engine.pausedAt
         let today = LocalDay.today()
         let week = Period.week.range(containing: today, firstWeekday: settings.firstWeekday)
         let month = Period.month.range(containing: today, firstWeekday: settings.firstWeekday)
@@ -225,7 +230,12 @@ final class AppModel {
         summary = Summary(asOf: Date(), today: totals[today] ?? DayTotals(),
                           day: evaluate(.day, totals), week: evaluate(.week, totals), month: evaluate(.month, totals),
                           overtime: Aggregator.overtime(sessions, on: today, schedule: settings.schedule),
-                          agent: Aggregator.dayTotals(sessions) { $0.source == .agent && $0.kind == .work }[today]?.work ?? 0)
+                          agent: Aggregator.dayTotals(sessions) { $0.source == .agent && $0.kind == .work }[today]?.work ?? 0,
+                          sessionWork: workSessionStart.map { start in
+                              // A session can be older than the loaded week and month: read it from its start.
+                              let own = start < sessions.first?.start ?? .distantFuture ? ((try? store.sessions(from: start)) ?? sessions) : sessions
+                              return Aggregator.work(own, since: start)
+                          } ?? 0)
         let scheduled = Goals.config(on: today, projectID: nil, in: goals)?.workingDays ?? settings.schedule.days
         summary.weekDays = week.days.compactMap { day in
             let worked = Goals.isWorkingDay(totals[day]?.work ?? 0, on: day, configs: goals)
@@ -235,7 +245,6 @@ final class AppModel {
             return scheduled.contains(day.weekday) || worked
                 ? (day: day, worked: worked, off: off && !worked, extra: worked && !planned) : nil
         }
-        summary.weekDaysTarget = week.days.filter { scheduled.contains($0.weekday) && !settings.schedule.isDayOff($0.index) }.count
         isDayOff = engine.isDayOffToday
         dayOffUndo = settings.dayOffUndo.flatMap { $0.day == today.index ? $0 : nil }
         if isDayOff || status != .personal { confirmingDayOff = false }
@@ -244,16 +253,13 @@ final class AppModel {
         workHoursEnd = engine.workHoursEnd
         lastWorkHoursEnd = engine.lastWorkHoursEnd
         nextWorkHoursStart = engine.nextWorkHoursStart
-        if status == .paused {
-            let start = pausedAt ?? Date()
-            pausedAt = start
+        if let start = pausedAt {
             if breakReminderFor != start {
                 breakReminderFor = start
                 reminders.scheduleBreakReminder(at: start.addingTimeInterval(Double(Self.breakReminderMinutes) * 60),
                                                 minutes: Self.breakReminderMinutes)
             }
         } else {
-            pausedAt = nil
             if breakReminderFor != nil {
                 breakReminderFor = nil
                 reminders.cancelBreakReminder()
@@ -299,30 +305,44 @@ final class AppModel {
 
     var isWorking: Bool { status == .tracking(.work) }
 
+    /// The small text at the top right of the status card: always about work hours.
+    var workHoursNote: String {
+        guard settings.schedule.isUsable else { return "" }
+        if let end = workHoursEnd { return "Until \(Fmt.time(end))" }
+        if let end = lastWorkHoursEnd, Calendar.current.isDateInToday(end) { return "Work hours ended at \(Fmt.time(end))" }
+        if let start = nextWorkHoursStart, Calendar.current.isDateInToday(start) { return "Work hours start at \(Fmt.time(start))" }
+        return "No work hours today"
+    }
+
+    /// The one decision of what the current state is called (see `Headline`).
+    var headline: Headline { Headline(status: status, overtime: isOvertime, agent: agentWorking, dayOff: isDayOff) }
+
     /// Menu bar icon: one shape per state, so the state never depends on colour.
     var statusSymbol: String {
-        switch status {
-        case .tracking(.work):
-            isOvertime ? "clock" : agentWorking ? "terminal" : goalReached ? "checkmark.circle" : "stopwatch.fill"
-        case .tracking(.idle), .idle: "moon"
-        case .tracking, .waiting: "stopwatch"
+        switch headline {
+        case .overtime: "clock"
+        case .agent: "terminal"
+        case .tracking: goalReached ? "checkmark.circle" : "stopwatch.fill"
+        case .nonwork, .ignored, .waiting: "stopwatch"
+        case .idle: "moon"
         case .paused: "pause.circle"
-        case .personal, .stopped: isDayOff ? "calendar.badge.minus" : "person.crop.circle"
+        case .personal: "person.crop.circle"
+        case .dayOff: "calendar.badge.minus"
         }
     }
 
     var statusText: String {
-        switch status {
-        case .tracking(.work):
-            if agentWorking { "\(engine.agent ?? "Agent") working" }
-            else if isOvertime { "Overtime" }
-            else { "Tracking work" }
-        case .tracking(.nonwork): "Active · non-work"
-        case .tracking(.excluded): "Ignored application"
-        case .tracking(.idle), .idle: "Idle · auto-paused"
+        switch headline {
+        case .overtime: "Overtime"
+        case .agent: "\(engine.agent ?? "Agent") working"
+        case .tracking: "Tracking work"
+        case .nonwork: "Active · non-work"
+        case .ignored: "Ignored application"
+        case .idle: "Idle"
         case .waiting: "Waiting for activity"
         case .paused: "Paused"
-        case .personal, .stopped: isDayOff ? "Day off" : "Personal"
+        case .personal: "Personal"
+        case .dayOff: "Day off"
         }
     }
 
@@ -331,18 +351,15 @@ final class AppModel {
         if settings.menuBarDisplay == .iconOnly { return nil }
         // Off work: the name only. A work number here reads as personal time and pulls you back to work.
         let prefix: String
-        switch status {
-        case .personal, .stopped: return isDayOff ? "Day off" : "Personal"
+        switch headline {
+        case .personal, .dayOff: return statusText
         case .paused: prefix = "Paused · "
-        case .idle, .tracking(.idle): prefix = "Idle · "
-        case .tracking(.work) where isOvertime: prefix = "Overtime · "
+        case .idle: prefix = "Idle · "
+        case .overtime: prefix = "Overtime · "
         default: prefix = ""
         }
-        switch settings.menuBarDisplay {
-        case .iconOnly: return nil
-        case .today: return prefix + Fmt.duration(summary.today.work, seconds: false)
-        case .session: return sessionStart.map { Fmt.duration(summary.asOf.timeIntervalSince($0), seconds: false) }
-        }
+        let seconds = settings.menuBarDisplay == .session ? summary.sessionWork : summary.today.work
+        return prefix + Fmt.duration(seconds, seconds: false)
     }
 
     /// What VoiceOver reads for the menu bar item.
@@ -370,7 +387,6 @@ final class AppModel {
     }
 
     func pause() {
-        pausedAt = Date()   // before the engine refreshes the model, so the break reminder uses this time
         engine.pause()
         Sounds.play(.down, mode: settings.sounds)
     }

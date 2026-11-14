@@ -372,6 +372,9 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var lastEndApplied: Double = 0
     /// Local day on which the user answered "Not work"; no suggestion is shown again that day.
     public var suggestionMutedDay: Int?
+    /// When the current work session began: Start work, or work hours starting. nil in Personal.
+    /// Pause, idle and other applications do not change it; only a change of profile does.
+    public var workSessionStart: Date?
 
     public init() {}
 
@@ -401,6 +404,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         lastStartApplied = c.value(.lastStartApplied, lastStartApplied)
         lastEndApplied = c.value(.lastEndApplied, lastEndApplied)
         suggestionMutedDay = c.value(.suggestionMutedDay, suggestionMutedDay)
+        workSessionStart = c.value(.workSessionStart, workSessionStart)
     }
 }
 

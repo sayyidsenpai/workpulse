@@ -95,28 +95,66 @@ final class ProfileTests: XCTestCase {
         XCTAssertEqual(engine.status, .personal)
     }
 
-    // MARK: The stretch since the last break
+    // MARK: The work session ("This session")
 
-    func testEndWorkStartsANewStretchAlsoWhenNothingElseChanges() throws {
+    func testWorkSessionLastsFromStartWorkToEndWork() throws {
         // Slack is non-work in both profiles, so the recorded interval does not change on End work.
         engine.appActivated(slack)
-        let first = try XCTUnwrap(engine.sessionStart)
-        time.advance(600)
+        XCTAssertNotNil(engine.workSessionStart, "the Work profile always has a work session")
         engine.endWork()
-        XCTAssertEqual(engine.sessionStart, time.now)
-        XCTAssertNotEqual(engine.sessionStart, first)
+        XCTAssertNil(engine.workSessionStart)
         time.advance(60)
         engine.startWork()
-        XCTAssertEqual(engine.sessionStart, time.now)
+        let start = time.now
+        XCTAssertEqual(engine.workSessionStart, start)
+        engine.appActivated(xcode)
+        time.advance(600)
+        engine.tick(idleSeconds: 400)                    // idle
+        engine.pause(); time.advance(60); engine.resume() // a break
+        XCTAssertEqual(engine.workSessionStart, start, "idle, pause and other apps do not end it")
+        engine.shutdown()
+        try boot(at: 11)
+        XCTAssertEqual(engine.workSessionStart, start, "it survives a relaunch")
     }
 
-    func testStartWorkWithEvidenceKeepsTheStretch() throws {
+    func testStartWorkWithEvidenceBeginsAtTheEvidence() throws {
         engine.endWork()
         engine.appActivated(xcode)
-        let start = try XCTUnwrap(engine.sessionStart)
+        let evidence = time.now
         time.advance(720)
         engine.startWork(includeEvidence: true)
-        XCTAssertEqual(engine.sessionStart, start, "the evidence was work without a break")
+        XCTAssertEqual(engine.workSessionStart, evidence, "the moved work belongs to this session")
+    }
+
+    func testSettingsFromBeforeWorkSessionsStartOneOnLaunch() throws {
+        var old = try store.loadSettings()
+        old.profile = .work
+        old.workSessionStart = nil
+        try store.saveSettings(old)
+        try boot(at: 10)
+        XCTAssertEqual(engine.workSessionStart, time.now)
+    }
+
+    func testANewWorkDayStartsANewSessionAlsoWhenWorkIsStillOn() throws {
+        useWorkHours()
+        engine.tick(idleSeconds: 0)                      // Monday 09.00, in Work
+        let monday9 = time.now
+        XCTAssertNotNil(engine.workSessionStart)
+        time.advance(23 * 3600 + 60)                      // Tuesday 08.01, Work never ended (e.g. app closed)
+        engine.tick(idleSeconds: 0)
+        XCTAssertEqual(engine.settings.profile, .work)
+        XCTAssertEqual(engine.workSessionStart, at(LocalDay(index: monday.index + 1), 8))
+        XCTAssertNotEqual(engine.workSessionStart, monday9)
+    }
+
+    func testDayOffEndsTheSessionAndUndoStartsOne() throws {
+        useWorkHours()
+        engine.tick(idleSeconds: 0)
+        engine.takeDayOff(moveWork: false)
+        XCTAssertNil(engine.workSessionStart)
+        time.advance(60)
+        engine.undoDayOff()
+        XCTAssertEqual(engine.workSessionStart, time.now)
     }
 
     // MARK: Evidence ("Is this work?")
@@ -350,6 +388,16 @@ final class ProfileTests: XCTestCase {
         XCTAssertEqual(evaluate(.week, [own]).targetSeconds, 20 * h, "a goal that was set by hand is kept")
         XCTAssertEqual(evaluate(.month, [own]).targetSeconds, 80 * h)
         XCTAssertNil(evaluate(.week, [GoalConfig(effectiveFrom: monday)]).targetSeconds)
+    }
+
+    func testDaysGoalIsThePlannedWorkDaysUnlessSetByHand() {
+        let config = GoalConfig(effectiveFrom: monday, dailyHours: 6, workingDays: weekdays)
+        let week = Goals.evaluate(.week, containing: monday, totals: [:], configs: [config], today: monday, firstWeekday: 2,
+                                  isDayOff: { $0 == monday })
+        XCTAssertEqual(week.plannedDays, 4, "five work days minus one day off")
+        XCTAssertEqual(week.daysGoal, 4)
+        let byHand = GoalConfig(effectiveFrom: monday, weeklyDays: 3, workingDays: weekdays)
+        XCTAssertEqual(Goals.evaluate(.week, containing: monday, totals: [:], configs: [byHand], today: monday, firstWeekday: 2).daysGoal, 3)
     }
 
     // MARK: Days off

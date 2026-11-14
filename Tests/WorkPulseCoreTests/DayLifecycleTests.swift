@@ -2,7 +2,7 @@ import XCTest
 @testable import WorkPulseCore
 
 /// Whole days as a user lives them, from the morning to the next day.
-/// Each step checks the status, the profile, the stretch since the last break, and what was recorded.
+/// Each step checks the status, the profile, the work session ("This session"), and what was recorded.
 final class DayLifecycleTests: XCTestCase {
     typealias App = TrackingEngine.FrontApp
 
@@ -58,15 +58,15 @@ final class DayLifecycleTests: XCTestCase {
         XCTAssertEqual(engine.evidenceSeconds, 720, accuracy: 0.5, "the 'Is this work?' evidence grows")
         XCTAssertEqual(total(try sessions(on: monday), .work), 0)
 
-        // 08.01 Work hours start: Work profile, one notice, a new stretch.
+        // 08.01 Work hours start: Work profile, one notice, a new work session.
         pass(19 * 60)
         XCTAssertEqual(engine.settings.profile, .work)
         XCTAssertEqual(hoursStarted, 1)
         XCTAssertEqual(engine.status, .tracking(.work))
-        XCTAssertEqual(engine.sessionStart, time.now)
-        let stretch = engine.sessionStart
+        let session = try XCTUnwrap(engine.workSessionStart)
+        XCTAssertEqual(session, at(monday, 8), "the session starts at the start of the work hours")
 
-        // Other applications: the stretch goes on; an ignored app keeps no identity.
+        // Other applications: the session goes on; an ignored app keeps no identity.
         pass(2 * 3600)
         engine.appActivated(slack)
         XCTAssertEqual(engine.status, .tracking(.nonwork))
@@ -75,17 +75,16 @@ final class DayLifecycleTests: XCTestCase {
         XCTAssertEqual(engine.status, .tracking(.excluded))
         pass(5 * 60)
         engine.appActivated(xcode)
-        XCTAssertEqual(engine.sessionStart, stretch, "changing applications is not a break")
+        XCTAssertEqual(engine.workSessionStart, session, "changing applications does not end the session")
 
-        // Idle: trimmed back to the last input, then a new stretch on return.
+        // Idle: trimmed back to the last input; the session goes on.
         time.advance(400)
         engine.tick(idleSeconds: 300)
         XCTAssertEqual(engine.status, .idle)
         XCTAssertEqual(engine.idleSince, time.now.addingTimeInterval(-300))
-        XCTAssertNil(engine.sessionStart)
         pass(100, idle: 2)
         XCTAssertEqual(engine.status, .tracking(.work))
-        XCTAssertEqual(engine.sessionStart, time.now.addingTimeInterval(-2))
+        XCTAssertEqual(engine.workSessionStart, session)
 
         // Lock and sleep inside work hours: away, but still the Work profile.
         engine.screenLocked()
@@ -101,13 +100,13 @@ final class DayLifecycleTests: XCTestCase {
         pass(60)
         XCTAssertEqual(engine.status, .tracking(.work))
 
-        // Pause: nothing is recorded during the break; Resume starts a new stretch.
+        // Pause: nothing is recorded during the break; Resume continues the same session.
         time.advance(at(monday, 12).timeIntervalSince(time.now))
         engine.tick(idleSeconds: 0)
         engine.pause()
         let pausedAt = time.now
         XCTAssertEqual(engine.status, .paused)
-        XCTAssertNil(engine.sessionStart)
+        XCTAssertEqual(engine.pausedAt, pausedAt)
         time.advance(30 * 60)
         engine.tick(idleSeconds: 30 * 60)
         XCTAssertEqual(engine.status, .paused, "idle during a pause changes nothing")
@@ -116,7 +115,8 @@ final class DayLifecycleTests: XCTestCase {
         // The app reads the input at once after Resume (AppModel.resume polls): the click is input.
         engine.tick(idleSeconds: 0)
         XCTAssertEqual(engine.status, .tracking(.work), "after Resume the status is not Idle")
-        XCTAssertEqual(engine.sessionStart, time.now)
+        XCTAssertEqual(engine.workSessionStart, session, "a pause does not end the session")
+        XCTAssertNil(engine.pausedAt)
         let resumedAt = time.now
 
         // An agent works while the user is in a non-work app and then idle: that counts as work.
@@ -140,15 +140,15 @@ final class DayLifecycleTests: XCTestCase {
         let overtime = Aggregator.overtime(try sessions(on: monday), on: monday, schedule: engine.settings.schedule)
         XCTAssertEqual(overtime, 34 * 60, accuracy: 1, "all work after 16.00 is overtime")
 
-        // End work, then Start overtime: each starts a new stretch.
+        // End work ends the session; Start overtime starts a new one.
         engine.endWork()
         XCTAssertEqual(engine.status, .personal)
-        XCTAssertEqual(engine.sessionStart, time.now)
+        XCTAssertNil(engine.workSessionStart)
         pass(5 * 60)
         engine.startWork()
         XCTAssertEqual(engine.status, .tracking(.work))
         XCTAssertTrue(engine.isOvertime)
-        XCTAssertEqual(engine.sessionStart, time.now)
+        XCTAssertEqual(engine.workSessionStart, time.now)
 
         // Away for 16 minutes in overtime: back to Personal by itself.
         time.advance(16 * 60)
@@ -158,6 +158,8 @@ final class DayLifecycleTests: XCTestCase {
 
         let day = try sessions(on: monday)
         assertNoOverlap(day)
+        XCTAssertEqual(Aggregator.work(day, since: session), total(day, .work), accuracy: 0.001,
+                       "the first session holds all of the day's work")
         XCTAssertFalse(day.contains { $0.start < resumedAt && $0.end > pausedAt }, "no time is recorded during the pause")
         XCTAssertTrue(day.filter { $0.kind == .excluded }.allSatisfy { $0.appName == nil && $0.bundleID == nil })
         XCTAssertGreaterThan(day.filter { $0.source == .agent && $0.kind == .work }.reduce(0) { $0 + $1.duration }, 0)
@@ -180,7 +182,7 @@ final class DayLifecycleTests: XCTestCase {
         XCTAssertEqual(engine.settings.profile, .work)
         XCTAssertFalse(engine.isDayOffToday)
         XCTAssertEqual(total(try sessions(on: tuesday), .work), 30 * 60, accuracy: 1, "undo gives the work back")
-        XCTAssertEqual(engine.sessionStart, time.now)
+        XCTAssertEqual(engine.workSessionStart, time.now)
 
         // A crash in the middle of a session (no shutdown), then a relaunch 20 minutes later.
         pass(10 * 60)
@@ -211,5 +213,87 @@ final class DayLifecycleTests: XCTestCase {
         XCTAssertEqual(Aggregator.overtime(try sessions(on: saturday), on: saturday, schedule: engine.settings.schedule),
                        3600, accuracy: 1)
         engine.shutdown()
+    }
+
+    // MARK: Edge cases of the work session
+
+    func testWorkHoursPastMidnightKeepOneSessionPerWorkDay() throws {
+        // 07.40 to 00.15, like a late schedule: the work day ends after midnight.
+        boot(monday, 7.5)
+        engine.endWork()
+        engine.updateSettings { $0.schedule = WorkSchedule(enabled: true, days: [2, 3, 4, 5, 6], startMinutes: 7 * 60 + 40, endMinutes: 15) }
+        engine.appActivated(xcode)
+        pass(11 * 60)                                            // 07.41
+        XCTAssertEqual(engine.settings.profile, .work)
+        let session = try XCTUnwrap(engine.workSessionStart)
+        XCTAssertEqual(session, at(monday, 7 + 40.0 / 60))
+
+        time.advance(at(tuesday, 0 + 10.0 / 60).timeIntervalSince(time.now))   // Tuesday 00.10, still Monday's work hours
+        engine.tick(idleSeconds: 0)
+        XCTAssertFalse(engine.isOvertime)
+        XCTAssertEqual(engine.workSessionStart, session, "midnight does not start a new session")
+
+        pass(6 * 60)                                             // 00.16: Monday's work hours ended a minute ago
+        XCTAssertTrue(engine.isOvertime)
+        XCTAssertEqual(engine.workSessionStart, session)
+
+        time.advance(at(tuesday, 7 + 41.0 / 60).timeIntervalSince(time.now))   // still working at Tuesday 07.41
+        engine.tick(idleSeconds: 0)
+        XCTAssertEqual(engine.workSessionStart, at(tuesday, 7 + 40.0 / 60), "the next work day starts a new session")
+        engine.shutdown()
+        assertNoOverlap(try store.sessions())
+    }
+
+    func testClockAndTimeZoneChangesKeepTheSessionHonest() throws {
+        boot(monday, 9)
+        engine.appActivated(xcode)
+        pass(0)
+        let session = try XCTUnwrap(engine.workSessionStart)
+        pass(3600)
+
+        time.now -= 2 * 3600                                     // the clock is set back two hours
+        engine.clockChanged()
+        pass(1800)
+        time.now += 3 * 3600                                     // then three hours forward
+        engine.clockChanged()
+        pass(1800)
+        time.tzOffset = 3600                                     // a new time zone
+        pass(1800)
+        engine.shutdown()
+
+        let all = try store.sessions()
+        assertNoOverlap(all)
+        XCTAssertEqual(engine.workSessionStart, session, "clock and zone changes do not end the session")
+        XCTAssertEqual(Aggregator.work(all, since: session), 3600 + 3 * 1800, accuracy: 1,
+                       "only the time actually worked counts, not the clock jumps")
+    }
+
+    func testASessionWithoutWorkHoursCanLastDays() throws {
+        boot(monday, 9)                                          // no work hours: Work stays on until End work
+        engine.appActivated(xcode)
+        pass(0)
+        let session = try XCTUnwrap(engine.workSessionStart)
+        pass(3600)
+        engine.shutdown()
+        boot(LocalDay(index: monday.index + 8), 9)               // the Tuesday of the next week
+        engine.appActivated(xcode)
+        pass(1800)
+        engine.shutdown()
+        XCTAssertEqual(engine.workSessionStart, session)
+        XCTAssertEqual(Aggregator.work(try store.sessions(from: session), since: session), 5400, accuracy: 1,
+                       "all of the session's work counts, also from an earlier week")
+    }
+
+    func testPauseBelongsToTheWorkProfileOnly() {
+        boot(monday, 9)
+        engine.endWork()
+        engine.pause()
+        XCTAssertFalse(engine.paused, "Personal records no work, so there is nothing to pause")
+        XCTAssertEqual(engine.status, .personal)
+        engine.startWork()
+        engine.pause()
+        XCTAssertEqual(engine.status, .paused)
+        engine.endWork()
+        XCTAssertNil(engine.pausedAt, "a change of profile ends the pause")
     }
 }

@@ -91,7 +91,7 @@ extension AppModel {
             suggestion = ask ? Suggestion(app: "Xcode", minutes: 12) : nil
             heroes.append(hero)
         }
-        sessionStart = Date().addingTimeInterval(-2712)
+        summary.sessionWork = 2712
         pausedAt = Date().addingTimeInterval(-312)
         idleSince = Date().addingTimeInterval(-900)
         add(.tracking(.work))
@@ -129,7 +129,7 @@ extension AppModel {
         window.setFrameOrigin(NSPoint(x: -30000, y: -30000))  // off screen
         window.orderFrontRegardless()
         try? await Task.sleep(for: .seconds(0.7))  // let onAppear-driven loads finish
-        if Self.demo { sessionStart = Date().addingTimeInterval(-2712) }
+        if Self.demo { summary.sessionWork = 2712 }
         try? await Task.sleep(for: .seconds(0.8))
         if let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds) {
             host.cacheDisplay(in: host.bounds, to: bitmap)

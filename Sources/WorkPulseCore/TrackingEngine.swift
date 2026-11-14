@@ -74,15 +74,18 @@ public final class TrackingEngine {
     public private(set) var frontApp: FrontApp?
     /// An explicit Start…Stop work session is running (manual and hybrid modes).
     public private(set) var manualActive = false
-    public private(set) var paused = false
+    public private(set) var paused = false {
+        didSet { pausedAt = paused ? (pausedAt ?? time.now) : nil }
+    }
+    /// When the current pause began, or nil when not paused.
+    public private(set) var pausedAt: Date?
     public private(set) var idle = false
     public private(set) var locked = false
     public private(set) var asleep = false
     /// AI agent(s) currently working, as reported by their hooks ("Claude Code", "Codex"); nil = none.
     public private(set) var agent: String?
-    /// Start of the current stretch since the user's last break: reset by idle, pause, stop, sleep,
-    /// and by a change of profile (End work, Start work, work hours starting or ending).
-    public private(set) var sessionStart: Date?
+    /// When the current work session began (see `AppSettings.workSessionStart`).
+    public var workSessionStart: Date? { settings.workSessionStart }
     /// When the current idle stretch began (the last input), or nil when not idle.
     public var idleSince: Date? { open?.desc.kind == .idle ? open?.startWall : nil }
     private var open: Open?
@@ -96,6 +99,8 @@ public final class TrackingEngine {
     /// Work-application intervals recorded in Personal since the user was last away.
     private var evidenceIDs: [Int64] = []
     private var evidenceClosed: TimeInterval = 0
+    /// Start of the first evidence interval, so work moved from it begins the work session there.
+    private var evidenceStart: Date?
     /// The work application most recently used in the Personal profile.
     public private(set) var evidenceApp: String?
 
@@ -138,6 +143,15 @@ public final class TrackingEngine {
     public func recover() {
         attempt { try store.recoverUnclosed() }
         lastEnd = (try? store.latestEnd()) ?? .distantPast
+        ensureWorkSession()
+    }
+
+    /// Settings from before work sessions existed (or a restored backup): the Work profile is on,
+    /// so a work session starts now. Idempotent.
+    private func ensureWorkSession() {
+        guard settings.profile == .work, settings.workSessionStart == nil else { return }
+        settings.workSessionStart = time.now
+        attempt { try store.saveSettings(settings) }
     }
 
     // MARK: - State
@@ -160,7 +174,8 @@ public final class TrackingEngine {
 
     public var canStart: Bool { settings.mode == .automatic ? !settings.autoEnabled : !manualActive }
     public var canStop: Bool { wantsRecording }
-    public var canPause: Bool { wantsRecording && !paused }
+    /// Pause belongs to the Work profile: Personal records no work, so there is nothing to pause.
+    public var canPause: Bool { wantsRecording && !paused && settings.profile == .work }
     public var canResume: Bool { wantsRecording && paused }
 
     /// The wall clock is behind the newest recorded session, so new time is appended after it.
@@ -217,6 +232,7 @@ public final class TrackingEngine {
         evidenceIDs = []
         evidenceClosed = 0
         evidenceApp = nil
+        evidenceStart = nil
     }
 
     /// Acts on each start and end of work hours once, and ends overtime when the user stops.
@@ -231,9 +247,14 @@ public final class TrackingEngine {
             marks.lastStartApplied = start
             // The undo of a day off lasts until the next work hours start.
             settings.dayOffUndo = nil
+            // Work hours started: a work session from the start of the work hours, also when Work was
+            // still on (overtime into the next work day, or the app was closed overnight).
+            let begin = Date(timeIntervalSince1970: start - Double(time.tzOffset))
             if schedule.contains(local: now), settings.profile != .work {
-                setProfile(.work, reason: "hours")
+                setProfile(.work, reason: "hours", sessionStart: begin)
                 onWorkHoursStarted?()
+            } else if schedule.contains(local: now) {
+                settings.workSessionStart = begin
             }
         }
         let agentBusy = agent != nil && settings.countAgentWork
@@ -314,12 +335,7 @@ public final class TrackingEngine {
         if open == nil { runFloor = time.uptime }
         closeOpen(reason, at: u)
         if let want { openNew(want, at: u) }
-        if want == nil || want?.kind == .idle {
-            sessionStart = nil
-            clearEvidence()
-        } else if sessionStart == nil {
-            sessionStart = open?.startWall
-        }
+        if want == nil || want?.kind == .idle { clearEvidence() }
         return true
     }
 
@@ -355,7 +371,10 @@ public final class TrackingEngine {
             let id = try store.insert(session)
             open = Open(id: id, startWall: start, startUptime: startUptime, desc: d)
             lastCheckpoint = time.uptime
-            if d.personalWork { evidenceApp = d.appName }
+            if d.personalWork {
+                evidenceApp = d.appName
+                if evidenceStart == nil { evidenceStart = start }
+            }
         }
     }
 
@@ -510,13 +529,14 @@ public final class TrackingEngine {
     /// applications while Personal was on is moved to work first: there is evidence for it.
     public func startWork(includeEvidence: Bool = false) {
         guard settings.profile != .work else { return }
+        var sessionStart: Date?
         if includeEvidence {
             closeOpen("profile", at: time.uptime)
             let ids = evidenceIDs
             attempt { try store.markAsWork(ids) }
+            sessionStart = evidenceStart   // the moved work belongs to this session
         }
-        // The evidence was work done without a break, so it stays part of the current stretch.
-        setProfile(.work, reason: "profile", keepSession: includeEvidence)
+        setProfile(.work, reason: "profile", sessionStart: sessionStart)
         notify()
     }
 
@@ -550,6 +570,7 @@ public final class TrackingEngine {
         settings.dayOffUndo = DayOffUndo(day: day, moved: moved, movedSeconds: seconds, profile: previous, added: added)
         paused = false
         settings.profile = .personal
+        settings.workSessionStart = nil
         attempt { try store.saveSettings(settings) }
         clearEvidence()
         reconcile("dayoff")
@@ -565,10 +586,10 @@ public final class TrackingEngine {
         settings.dayOffUndo = nil
         paused = false
         settings.profile = undo.profile
+        settings.workSessionStart = undo.profile == .work ? time.now : nil
         attempt { try store.saveSettings(settings) }
         clearEvidence()
         reconcile("undo")
-        restartSession()
         notify()
     }
 
@@ -579,20 +600,17 @@ public final class TrackingEngine {
         notify()
     }
 
-    private func setProfile(_ profile: Profile, reason: String, keepSession: Bool = false) {
+    /// The only place, with `takeDayOff` and `undoDayOff`, where the profile changes. A work session
+    /// starts with the Work profile (at `sessionStart`, default now) and ends with it.
+    private func setProfile(_ profile: Profile, reason: String, sessionStart: Date? = nil) {
         guard settings.profile != profile else { return }
         paused = false
         settings.profile = profile
+        settings.workSessionStart = profile == .work ? (sessionStart ?? time.now) : nil
         attempt { try store.saveSettings(settings) }
+        log.notice("profile \(profile.rawValue, privacy: .public) (\(reason, privacy: .public)); work session from \(self.settings.workSessionStart?.description ?? "none", privacy: .public)")
         clearEvidence()
         reconcile(reason)
-        if !keepSession { restartSession() }
-    }
-
-    /// A new stretch starts now. Set directly, not through `reconcile`: when the recorded activity
-    /// is the same in both profiles (a non-work or ignored application), `reconcile` changes nothing.
-    private func restartSession() {
-        sessionStart = open.flatMap { $0.desc.kind == .idle ? nil : time.now }
     }
 
     private func setAutoEnabled(_ on: Bool) {
@@ -640,11 +658,11 @@ public final class TrackingEngine {
     public func reload() {
         closeOpen("rules", at: time.uptime)
         attempt { try store.recoverUnclosed() }  // e.g. a restored backup taken mid-session
-        sessionStart = nil
         manualActive = false
         paused = false
         clearEvidence()
         settings = Self.loadSettings(store)
+        ensureWorkSession()
         loadState()
         reconcile("rules")
         notify()
@@ -653,6 +671,5 @@ public final class TrackingEngine {
     /// Closes the open interval; call on quit.
     public func shutdown() {
         closeOpen("quit", at: time.uptime)
-        sessionStart = nil
     }
 }

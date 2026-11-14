@@ -105,6 +105,11 @@ public enum Aggregator {
         return sums.sorted { $0.value == $1.value ? $0.key < $1.key : $0.value > $1.value }.map { (key: $0.key, seconds: $0.value) }
     }
 
+    /// Work recorded from `start` on (a session that began earlier counts from `start`).
+    public static func work(_ sessions: [Session], since start: Date) -> TimeInterval {
+        sessions.filter { $0.kind == .work }.reduce(0) { $0 + max(0, $1.end.timeIntervalSince(max($1.start, start))) }
+    }
+
     /// Work time on `day` that is outside the work hours.
     public static func overtime(_ sessions: [Session], on day: LocalDay, schedule: WorkSchedule) -> TimeInterval {
         guard schedule.isUsable else { return 0 }
@@ -135,8 +140,15 @@ public struct PeriodResult: Equatable, Sendable {
     public var range: ClosedRange<LocalDay>
     public var workSeconds: TimeInterval
     public var targetSeconds: TimeInterval?
+    /// Days with work (each day that reached the minimum counts, planned or not).
     public var workingDays: Int
+    /// A days goal set by hand (older settings); nil for the derived goals.
     public var daysTarget: Int?
+    /// Work days in the period by the schedule, without days off.
+    public var plannedDays: Int?
+
+    /// The number to show after "x of": the days goal, or else the planned work days.
+    public var daysGoal: Int? { daysTarget ?? plannedDays }
 
     public var remainingSeconds: TimeInterval? { targetSeconds.map { max(0, $0 - workSeconds) } }
     public var fraction: Double? { targetSeconds.map { $0 > 0 ? min(1, workSeconds / $0) : 1 } }
@@ -177,8 +189,9 @@ public enum Goals {
             work += seconds
             if isWorkingDay(seconds, on: d, configs: configs, projectID: projectID) { workingDays += 1 }
         }
+        let planned = config.map { c in range.days.filter { c.workingDays.contains($0.weekday) && !isDayOff($0) }.count }
         // A week or month without its own goal takes the daily goal for each of its work days.
-        let derived = config.flatMap { c in c.dailyHours.map { $0 * Double(range.days.filter { c.workingDays.contains($0.weekday) && !isDayOff($0) }.count) } }
+        let derived = config.flatMap { c in c.dailyHours.map { $0 * Double(planned ?? 0) } }
         let hours: Double?
         switch period {
         case .day: hours = config.flatMap { $0.workingDays.contains(day.weekday) && !isDayOff(day) ? $0.dailyHours : nil }
@@ -186,7 +199,8 @@ public enum Goals {
         case .month: hours = config?.monthlyHours ?? derived
         }
         return PeriodResult(period: period, range: range, workSeconds: work, targetSeconds: hours.map { $0 * 3600 },
-                            workingDays: workingDays, daysTarget: period == .week ? config?.weeklyDays : nil)
+                            workingDays: workingDays, daysTarget: period == .week ? config?.weeklyDays : nil,
+                            plannedDays: planned)
     }
 
     /// Every week or month that touches `range`, oldest first.

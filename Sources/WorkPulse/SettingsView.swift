@@ -93,7 +93,7 @@ struct SettingsView: View {
             if let note = model.loginItemNote { Note(tone: .warn, text: note) }
             row("Menu bar shows") {
                 WPMenu("Menu bar shows", selection: model.binding(\.menuBarDisplay),
-                       options: [(.iconOnly, "Icon only"), (.today, "Today's work time"), (.session, "Current session")])
+                       options: [(.iconOnly, "Icon only"), (.today, "Today's work time"), (.session, "This session")])
                     .frame(width: 190)
             }
             .divided()

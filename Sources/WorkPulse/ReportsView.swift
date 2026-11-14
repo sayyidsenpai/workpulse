@@ -648,11 +648,9 @@ struct ReportsView: View {
         return "\(Calendar.current.shortMonthSymbols[c.month - 1]) \(c.year)"
     }
 
-    /// Working days of the period and its number of work days: "4 of 5".
+    /// Working days of the period and its number of work days: "4 of 5" (the same rule as the popover).
     private func days(_ row: PeriodResult) -> String {
-        let config = Goals.config(on: min(row.range.upperBound, .today()), projectID: nil, in: model.goals)
-        let target = row.daysTarget ?? config.map { config in row.range.days.filter { config.workingDays.contains($0.weekday) && !model.isDayOff($0) }.count }
-        return target.map { "\(row.workingDays) of \($0)" } ?? String(row.workingDays)
+        row.daysGoal.map { "\(row.workingDays) of \($0)" } ?? String(row.workingDays)
     }
 
     /// An icon and a word for each result, so the result never depends on colour.

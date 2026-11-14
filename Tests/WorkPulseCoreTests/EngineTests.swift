@@ -142,7 +142,6 @@ final class EngineTests: XCTestCase {
         time.advance(400)                    // last input was 300 s ago
         engine.tick(idleSeconds: 300)        // threshold (300 s) reached
         XCTAssertEqual(engine.status, .idle)
-        XCTAssertNil(engine.sessionStart)
 
         time.advance(500)
         engine.tick(idleSeconds: 2)          // user came back 2 s ago
@@ -299,16 +298,36 @@ final class EngineTests: XCTestCase {
         XCTAssertEqual(sessions.map(\.endReason), ["pause", "stop", "quit"])
     }
 
-    func testPauseStartsANewStretch() throws {
+    func testPauseKeepsTheWorkSessionAndKnowsWhenItBegan() throws {
         engine.appActivated(xcode)
-        let first = engine.sessionStart
-        XCTAssertNotNil(first)
+        let session = try XCTUnwrap(engine.workSessionStart)
         time.advance(100)
         engine.pause()
-        XCTAssertNil(engine.sessionStart)
+        XCTAssertEqual(engine.pausedAt, time.now)
         time.advance(50)
+        engine.tick(idleSeconds: 50)
+        XCTAssertEqual(engine.pausedAt, time.now.addingTimeInterval(-50), "the pause start does not move")
         engine.resume()
-        XCTAssertEqual(engine.sessionStart, time.now)
+        XCTAssertNil(engine.pausedAt)
+        XCTAssertEqual(engine.workSessionStart, session, "a pause does not end the work session")
+    }
+
+    func testWorkSinceCountsOnlyWorkFromTheStart() {
+        let sessions = [makeSession(monday, 8, 10), makeSession(monday, 10, 11, kind: .nonwork), makeSession(monday, 11, 12)]
+        XCTAssertEqual(Aggregator.work(sessions, since: at(monday, 9)), 2 * 3600, accuracy: 0.001)
+        XCTAssertEqual(Aggregator.work(sessions, since: at(monday, 13)), 0)
+    }
+
+    func testHeadlineSaysOneThingInAFixedOrder() {
+        XCTAssertEqual(Headline(status: .tracking(.work), overtime: true, agent: true, dayOff: false), .overtime)
+        XCTAssertEqual(Headline(status: .tracking(.work), overtime: false, agent: true, dayOff: false), .agent)
+        XCTAssertEqual(Headline(status: .tracking(.work), overtime: false, agent: false, dayOff: false), .tracking)
+        XCTAssertEqual(Headline(status: .tracking(.idle), overtime: true, agent: false, dayOff: false), .idle)
+        XCTAssertEqual(Headline(status: .paused, overtime: true, agent: false, dayOff: false), .paused)
+        XCTAssertEqual(Headline(status: .personal, overtime: false, agent: false, dayOff: true), .dayOff)
+        XCTAssertEqual(Headline(status: .stopped, overtime: false, agent: false, dayOff: false), .personal)
+        XCTAssertFalse(Headline.dayOff.inWorkSession)
+        XCTAssertTrue(Headline.paused.inWorkSession)
     }
 
     func testIdleSinceIsTheLastInput() throws {
@@ -464,7 +483,10 @@ final class EngineTests: XCTestCase {
         XCTAssertEqual(sessions.count, 1, "no orphan rows survive the wipe")
         XCTAssertEqual(sessions[0].duration, 30, accuracy: 0.001)
         XCTAssertEqual(sessions[0].kind, .nonwork, "rules are gone, so the app is unclassified again")
-        XCTAssertEqual(engine.settings, AppSettings())
+        var fresh = AppSettings()
+        fresh.workSessionStart = engine.settings.workSessionStart
+        XCTAssertEqual(engine.settings, fresh, "settings are the defaults")
+        XCTAssertNotNil(engine.workSessionStart, "the default Work profile has a work session")
     }
 
     // MARK: Manual corrections while tracking

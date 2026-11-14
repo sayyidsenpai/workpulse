@@ -305,12 +305,15 @@ final class AppModel {
 
     /// Menu bar text; refreshed with the summary (at least every 30 s), shown to the minute.
     var menuBarText: String? {
-        let prefix = switch status {
-        case .personal, .stopped: isDayOff ? "Day off · " : "Personal · "
-        case .paused: "Paused · "
-        case .idle, .tracking(.idle): "Idle · "
-        case .tracking(.work) where isOvertime: "Overtime · "
-        default: ""
+        if settings.menuBarDisplay == .iconOnly { return nil }
+        // Off work: the name only. A work number here reads as personal time and pulls you back to work.
+        let prefix: String
+        switch status {
+        case .personal, .stopped: return isDayOff ? "Day off" : "Personal"
+        case .paused: prefix = "Paused · "
+        case .idle, .tracking(.idle): prefix = "Idle · "
+        case .tracking(.work) where isOvertime: prefix = "Overtime · "
+        default: prefix = ""
         }
         switch settings.menuBarDisplay {
         case .iconOnly: return nil

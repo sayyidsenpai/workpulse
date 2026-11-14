@@ -397,7 +397,9 @@ struct DaysOffCard: View {
             HStack(spacing: 0) {
                 WPDateField(selection: date, elements: .yearMonthDay, minDate: Calendar.current.startOfDay(for: min)).accessibilityLabel(label)
                 Spacer(minLength: 0)
+                CalendarButton(label: label, selection: date, minDate: Calendar.current.startOfDay(for: min))
             }
+            .padding(.trailing, -6)
             .wpField()
             .frame(width: 160)
         }

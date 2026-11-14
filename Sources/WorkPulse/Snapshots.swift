@@ -33,6 +33,12 @@ extension AppModel {
                 await capture(AgentSetupSheet(tool: tool).environment(self), size: nil, appearance: appearance,
                               to: folder.appendingPathComponent("setup-\(tool)\(suffix).png"))
             }
+            // Popover contents (a popover itself does not draw in an off-screen window).
+            await capture(CurrencySearch { _ in }, size: nil, appearance: appearance,
+                          to: folder.appendingPathComponent("currency-search\(suffix).png"))
+            await capture(DatePicker("From", selection: .constant(Date().addingTimeInterval(10 * 86_400)), in: Date()...,
+                                     displayedComponents: .date).datePickerStyle(.graphical).labelsHidden().padding(12),
+                          size: nil, appearance: appearance, to: folder.appendingPathComponent("calendar\(suffix).png"))
             for tab in MainTab.allCases {
                 self.tab = tab
                 await capture(MainView().environment(self), size: NSSize(width: 1080, height: Self.demo ? 720 : 800), appearance: appearance,

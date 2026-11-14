@@ -424,6 +424,38 @@ struct WPDateField: NSViewRepresentable {
     }
 }
 
+/// The calendar button at the right edge of a date field: the standard macOS calendar in a
+/// popover. Choosing a day closes it; typing in the field still works.
+struct CalendarButton: View {
+    let label: String
+    @Binding var selection: Date
+    var minDate: Date? = nil
+    var maxDate: Date? = nil
+    @State private var open = false
+
+    var body: some View {
+        Button { open.toggle() } label: {
+            Image(systemName: "calendar").font(.system(size: 13, weight: .medium))
+                .foregroundStyle(open ? WP.textBlue : WP.caption)
+                .frame(width: 26, height: 26)
+                .background(open ? WP.cobalt.opacity(0.12) : .clear, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Show calendar for \(label)")
+        .help("Show calendar")
+        .popover(isPresented: $open, arrowEdge: .bottom) {
+            DatePicker(label, selection: Binding(get: { selection }, set: { new in
+                let changedDay = !Calendar.current.isDate(new, inSameDayAs: selection)
+                selection = new
+                if changedDay { open = false }
+            }), in: (minDate ?? .distantPast)...(maxDate ?? .distantFuture), displayedComponents: .date)
+            .datePickerStyle(.graphical).labelsHidden()
+            .padding(12)
+        }
+    }
+}
+
 /// Two views side by side when the width allows, else one below the other. Unlike ViewThatFits,
 /// which lays out every candidate (and nests badly), it lays each view out once per pass: this
 /// matters for long lists such as the Apps table.

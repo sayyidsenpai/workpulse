@@ -258,10 +258,8 @@ struct SettingsView: View {
     }
 
     private var currencyMenu: some View {
-        labeled("Currency") {
-            WPMenu("Currency", selection: $currency, options: choices(Locale.commonISOCurrencyCodes) { $0 }).frame(width: 92)
-        }
-        .fixedSize()
+        labeled("Currency") { CurrencyMenu(selection: $currency).frame(width: 92) }
+            .fixedSize()
     }
 
     private func effectiveFrom(monthWidth: CGFloat?) -> some View {
@@ -423,5 +421,133 @@ private extension View {
     /// A row below a divider line: 12 pt between the line and the row.
     func divided(_ color: Color = WP.hairline) -> some View {
         padding(.top, 12).overlay(alignment: .top) { Rectangle().fill(color).frame(height: 1).accessibilityHidden(true) }
+    }
+}
+
+/// A short list (the region's currency and popular ones) and "Other currency…" with a search
+/// over every ISO currency: about 150 bare codes in one menu ask the user to recall codes.
+private struct CurrencyMenu: View {
+    @Binding var selection: String
+    @State private var searching = false
+    @Environment(\.isEnabled) private var enabled
+
+    /// Names in the language of the interface.
+    static let names = Locale(identifier: Bundle.main.preferredLocalizations.first ?? "en")
+    static func name(_ code: String) -> String { names.localizedString(forCurrencyCode: code) ?? code }
+
+    /// The chosen currency first when it is not a suggestion, then the region's, then popular ones.
+    private var suggestions: [String] {
+        let region = Locale.current.currency?.identifier
+        var codes: [String] = []
+        for code in [selection, region].compactMap({ $0 }) + ["USD", "EUR", "GBP", "JPY", "SGD", "AUD", "CNY", "INR"]
+        where !codes.contains(code) { codes.append(code) }
+        return codes
+    }
+
+    var body: some View {
+        Menu {
+            Section("Your region and popular") {
+                Picker("Currency", selection: $selection) {
+                    ForEach(suggestions, id: \.self) { Text("\($0) · \(Self.name($0))").tag($0) }
+                }
+                .pickerStyle(.inline).labelsHidden()
+            }
+            Divider()
+            Button("Other currency…") { searching = true }
+        } label: {
+            HStack(spacing: 6) {
+                Text(selection).font(WP.font(13, .medium)).foregroundStyle(WP.ink).lineLimit(1)
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.down").font(.system(size: 10, weight: .bold)).foregroundStyle(WP.caption)
+            }
+            .wpField()
+            .contentShape(Rectangle())
+        }
+        .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden)
+        .opacity(enabled ? 1 : 0.45)
+        .accessibilityLabel("Currency")
+        .accessibilityValue("\(selection), \(Self.name(selection))")
+        .popover(isPresented: $searching, arrowEdge: .bottom) {
+            CurrencySearch { selection = $0; searching = false }
+        }
+    }
+}
+
+/// Type a code or a name. Up and Down move the selection, Return or a click chooses, Esc closes.
+struct CurrencySearch: View {
+    let choose: (String) -> Void
+    @State private var query = ""
+    @State private var highlight = 0
+    @FocusState private var focused: Bool
+    private static let rowHeight: CGFloat = 30
+
+    private var matches: [String] {
+        let all = Locale.commonISOCurrencyCodes
+        let q = query.trimmingCharacters(in: .whitespaces)
+        guard !q.isEmpty else { return all }
+        return all.filter { $0.localizedCaseInsensitiveContains(q) || CurrencyMenu.name($0).localizedCaseInsensitiveContains(q) }
+    }
+
+    var body: some View {
+        let matches = matches
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Choose a currency").font(WP.font(13, .semibold)).foregroundStyle(WP.ink)
+            HStack(spacing: 7) {
+                Image(systemName: "magnifyingglass").font(.system(size: 12, weight: .semibold)).foregroundStyle(WP.caption)
+                TextField("Search currencies", text: $query, prompt: Text("Code or name"))
+                    .textFieldStyle(.plain).font(WP.font(13)).foregroundStyle(WP.ink)
+                    .focused($focused)
+                    .onSubmit { if matches.indices.contains(highlight) { choose(matches[highlight]) } }
+                    .onKeyPress(.downArrow) { highlight = min(highlight + 1, matches.count - 1); return .handled }
+                    .onKeyPress(.upArrow) { highlight = max(highlight - 1, 0); return .handled }
+            }
+            .padding(.horizontal, 10).frame(height: 32)
+            .background(WP.field, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(WP.cobalt, lineWidth: 2))
+            if matches.isEmpty {
+                Text("No currency matches \u{201C}\(query)\u{201D}.").font(WP.font(13)).foregroundStyle(WP.secondary)
+                    .frame(height: Self.rowHeight)
+            } else {
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVStack(spacing: 0) {
+                            ForEach(Array(matches.enumerated()), id: \.element) { index, code in
+                                row(code, on: index == highlight)
+                            }
+                        }
+                    }
+                    .frame(height: min(CGFloat(matches.count), 8) * Self.rowHeight)
+                    .onChange(of: highlight) { _, new in
+                        if matches.indices.contains(new) { proxy.scrollTo(matches[new]) }
+                    }
+                }
+                .accessibilityElement(children: .contain)
+                .accessibilityLabel("Currencies")
+            }
+        }
+        .padding(12)
+        .frame(width: 320)
+        .onChange(of: query) { highlight = 0 }
+        .onAppear { focused = true }
+    }
+
+    private func row(_ code: String, on: Bool) -> some View {
+        Button { choose(code) } label: {
+            HStack(spacing: 8) {
+                Text(code).font(WP.font(13, .semibold)).monospacedDigit().frame(width: 36, alignment: .leading)
+                Text(CurrencyMenu.name(code)).font(WP.font(13)).foregroundStyle(on ? Color.white.opacity(0.85) : WP.secondary)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+            }
+            .foregroundStyle(on ? Color.white : WP.ink)
+            .padding(.horizontal, 10)
+            .frame(height: Self.rowHeight)
+            .background(on ? WP.cobalt : .clear, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .id(code)
+        .accessibilityLabel("\(code), \(CurrencyMenu.name(code))")
+        .accessibilityAddTraits(on ? .isSelected : [])
     }
 }

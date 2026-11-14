@@ -170,7 +170,12 @@ struct HistoryView: View {
     }
 
     private func dateField(_ label: String, _ date: Binding<Date>) -> some View {
-        WPDateField(selection: date, elements: .yearMonthDay, maxDate: Date()).historyDate(label).wpField()
+        HStack(spacing: 4) {
+            WPDateField(selection: date, elements: .yearMonthDay, maxDate: Date()).historyDate(label)
+            CalendarButton(label: label, selection: date, maxDate: Date())
+        }
+        .padding(.trailing, -6)
+        .wpField()
     }
 
     private var searchField: some View {

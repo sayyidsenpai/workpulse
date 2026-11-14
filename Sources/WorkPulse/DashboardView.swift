@@ -14,7 +14,11 @@ struct DashboardView: View {
             if model.engine.clockBehind {
                 Note(tone: .warn, text: "The system clock is behind the latest recorded session. WorkPulse adds new time after that session until the clock is correct.")
             }
-            HeroCard(hero: model.hero)
+            if model.confirmingDayOff {
+                DayOffConfirm().transition(.opacity)
+            } else {
+                HeroCard(hero: model.hero)
+            }
             frontApplication
             if model.agentConnected {
                 Toggle("Count agent work as my work", isOn: model.binding(\.countAgentWork))
@@ -31,6 +35,11 @@ struct DashboardView: View {
         .frame(width: 392)
         .background(Wallpaper().opacity(0.5))
         .onAppear { model.refresh() }
+        .onDisappear {
+            // The question about a day off is asked one time; it does not come back.
+            model.offerDayOff = false
+            model.confirmingDayOff = false
+        }
     }
 
     // MARK: Application in front
@@ -170,7 +179,22 @@ extension AppModel {
                             label: next == nil ? "Work hours" : "Next work hours", big: { _ in next.map(Fmt.dayTime) ?? "Not set" },
                             note: "WorkPulse does not count work time now.",
                             fill: WP.heroLight, text: WP.ink, sub: WP.secondary)
-            if let ask = model.suggestion {
+            if model.isDayOff {
+                hero.title = "Day off"
+                hero.symbol = "calendar.badge.minus"
+                let moved = model.dayOffUndo?.movedSeconds ?? 0
+                hero.note = moved >= 1 ? "Today is a day off. WorkPulse moved \(Fmt.duration(moved)) of work to Personal."
+                                       : "Today is a day off. WorkPulse counts no work time today."
+                if model.dayOffUndo != nil {
+                    hero.first = HeroAction(label: "Undo", symbol: "arrow.uturn.backward", fill: WP.track, text: WP.ink) { model.undoDayOff() }
+                }
+                hero.second = HeroAction(label: model.startLabel, symbol: "play.fill", fill: WP.field, text: WP.ink) { model.startWork() }
+            } else if model.offerDayOff, let end = model.workHoursEnd {
+                // The user ended work early, in this popover: ask about a day off, one time.
+                hero.note = "Work hours continue until \(Fmt.time(end)). Is today a day off?"
+                hero.first = HeroAction(label: "Day off", symbol: "calendar.badge.minus", fill: WP.cobalt, text: .white) { model.requestDayOff() }
+                hero.second = HeroAction(label: model.startLabel, symbol: "play.fill", fill: WP.field, text: WP.ink) { model.startWork() }
+            } else if let ask = model.suggestion {
                 hero.note = "You used \(ask.app) for \(ask.minutes) minutes. Is this work?"
                 hero.first = HeroAction(label: model.startLabel, symbol: "play.fill", fill: WP.cobalt, text: .white) { model.startWork(includeEvidence: true) }
                 hero.second = HeroAction(label: "Not work", symbol: "xmark", fill: WP.track, text: WP.ink) { model.notWork() }
@@ -296,7 +320,7 @@ struct WorkTimeCard: View {
         let overtime = model.summary.overtime + (model.isOvertime ? live : 0)
         // Whole minutes on both sides, so "2h 45m" and "3h 15m left" always add up to the goal.
         let shown = work >= 60 ? (work / 60).rounded(.down) * 60 : work.rounded(.down)
-        var caption = target.map { reached ? "Goal of \(Fmt.duration($0, seconds: false)) reached" : "\(Fmt.duration($0 - shown)) left" } ?? "No goal for today"
+        var caption = target.map { reached ? "Goal of \(Fmt.duration($0, seconds: false)) reached" : "\(Fmt.duration($0 - shown)) left" } ?? (model.isDayOff ? "Day off. No daily goal today." : "No goal for today")
         if overtime >= 60 { caption += " · overtime \(Fmt.duration(overtime, seconds: false))" }
         return VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .firstTextBaseline) {
@@ -350,10 +374,14 @@ struct WorkTimeCard: View {
                 ForEach(days, id: \.day) { item in
                     Text(String(Calendar.current.veryShortWeekdaySymbols[item.day.weekday - 1]))
                         .font(WP.font(11, .bold))
+                        .strikethrough(item.off)
                         .foregroundStyle(item.worked ? Color.white : WP.secondary)
                         .frame(width: 20, height: 20)
-                        .background(item.worked ? WP.cobalt : .clear, in: Circle())
-                        .overlay { if !item.worked { Circle().strokeBorder(WP.caption, style: StrokeStyle(lineWidth: 1.5, dash: [3, 2])) } }
+                        .background(item.worked ? WP.cobalt : item.off ? WP.heroLight : .clear, in: Circle())
+                        .overlay {
+                            if item.off { Circle().strokeBorder(WP.switchOff, lineWidth: 1.5) }
+                            else if !item.worked { Circle().strokeBorder(WP.caption, style: StrokeStyle(lineWidth: 1.5, dash: [3, 2])) }
+                        }
                 }
             }
             .accessibilityHidden(true)
@@ -408,6 +436,87 @@ struct TodayMix: View {
         HStack(spacing: 6) {
             swatch().frame(width: 10, height: 10).clipShape(RoundedRectangle(cornerRadius: 3))
             Text(text).font(WP.font(12)).monospacedDigit().foregroundStyle(WP.secondary).lineLimit(1)
+        }
+    }
+}
+
+// MARK: - Day off
+
+/// "Make today a day off?": shown in place of the status card, with the work recorded today.
+struct DayOffConfirm: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        let work = model.todayWork
+        let total = work.apps.reduce(0) { $0 + $1.seconds }
+        let rows = Array(work.apps.prefix(3)) + (work.apps.count > 3
+            ? [(name: "Other applications", bundleID: String?.none, seconds: work.apps.dropFirst(3).reduce(0) { $0 + $1.seconds })] : [])
+        let daily = model.summary.day?.targetSeconds
+        let week = model.summary.week?.targetSeconds
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 8) {
+                Text("Make today a day off?").font(WP.font(15, .bold)).foregroundStyle(WP.ink).accessibilityAddTraits(.isHeader)
+                Spacer(minLength: 0)
+                Button { model.confirmingDayOff = false } label: {
+                    Image(systemName: "xmark").font(.system(size: 12, weight: .bold)).foregroundStyle(WP.ink)
+                        .frame(width: 28, height: 28).background(WP.hover, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                }
+                .buttonStyle(.plain).keyboardShortcut(.cancelAction).accessibilityLabel("Cancel")
+            }
+            // The span of the recorded work, not "now": the work can have ended hours ago.
+            Text(work.from.flatMap { from in work.to.map { "WorkPulse recorded this work today, from \(Fmt.time(from)) to \(Fmt.time($0)):" } }
+                 ?? "WorkPulse recorded this work today:")
+                .font(WP.font(13)).foregroundStyle(WP.secondary).fixedSize(horizontal: false, vertical: true)
+            VStack(spacing: 0) {
+                ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
+                    HStack(spacing: 10) {
+                        AppTile(name: row.name, bundleID: row.bundleID, symbol: row.bundleID == nil && row.name == "Other applications" ? "square.grid.2x2" : nil, size: 24)
+                        Text(row.name).font(WP.font(13, .medium)).foregroundStyle(WP.ink).lineLimit(1)
+                        Spacer(minLength: 8)
+                        Text(Fmt.duration(row.seconds)).font(WP.font(13)).monospacedDigit().foregroundStyle(WP.ink)
+                    }
+                    .padding(.vertical, 8)
+                    .overlay(alignment: .bottom) { Rectangle().fill(WP.hairline).frame(height: 1) }
+                }
+                HStack {
+                    Text("Total").font(WP.font(13, .semibold))
+                    Spacer()
+                    Text(Fmt.duration(total)).font(WP.font(13, .bold)).monospacedDigit()
+                }
+                .foregroundStyle(WP.ink)
+                .padding(.vertical, 8)
+            }
+            .overlay(alignment: .top) { Rectangle().fill(WP.hairline).frame(height: 1) }
+            VStack(alignment: .leading, spacing: 6) {
+                if daily != nil { effect("Your daily goal does not apply today.") }
+                if let week, let daily, week > daily {
+                    effect("This week's goal changes from \(Fmt.duration(week, seconds: false)) to \(Fmt.duration(week - daily, seconds: false)).")
+                }
+                effect("WorkPulse does not start work again today.")
+            }
+            Text("Move this \(Fmt.duration(total)) to Personal? Work that you keep counts as overtime.")
+                .font(WP.font(13, .semibold)).foregroundStyle(WP.ink).fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 8) {
+                Button("Keep as work") { model.takeDayOff(moveWork: false) }
+                    .buttonStyle(WPButtonStyle(height: 40, radius: 10, expand: true))
+                Button("Move to Personal") { model.takeDayOff(moveWork: true) }
+                    .buttonStyle(WPButtonStyle(kind: .primary, height: 40, radius: 10, expand: true))
+                    .shadow(color: WP.cobalt.opacity(0.3), radius: 5, y: 4)
+                    .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(16)
+        .background(WP.field, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(WP.hairline))
+        .shadow(color: WP.navy.opacity(0.14), radius: 12, y: 8)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Make today a day off?")
+    }
+
+    private func effect(_ text: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Image(systemName: "checkmark").font(.system(size: 10, weight: .bold)).foregroundStyle(WP.textBlue)
+            Text(text).font(WP.font(12)).foregroundStyle(WP.secondary).fixedSize(horizontal: false, vertical: true)
         }
     }
 }

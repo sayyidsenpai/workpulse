@@ -164,8 +164,10 @@ public enum Goals {
     /// Evaluates the day, week or month containing `day`. `totals` must already be filtered to the
     /// profile. The configuration used is the one in force on the period's last day (or today for
     /// the current period), so later goal changes never rewrite how past periods are judged.
+    /// `isDayOff`: days off have no daily goal and do not count toward derived week and month goals.
     public static func evaluate(_ period: Period, containing day: LocalDay, totals: [LocalDay: DayTotals],
-                                configs: [GoalConfig], projectID: Int64? = nil, today: LocalDay, firstWeekday: Int) -> PeriodResult {
+                                configs: [GoalConfig], projectID: Int64? = nil, today: LocalDay, firstWeekday: Int,
+                                isDayOff: (LocalDay) -> Bool = { _ in false }) -> PeriodResult {
         let range = period.range(containing: day, firstWeekday: firstWeekday)
         let config = config(on: min(range.upperBound, today), projectID: projectID, in: configs)
         var work: TimeInterval = 0
@@ -176,10 +178,10 @@ public enum Goals {
             if isWorkingDay(seconds, on: d, configs: configs, projectID: projectID) { workingDays += 1 }
         }
         // A week or month without its own goal takes the daily goal for each of its work days.
-        let derived = config.flatMap { c in c.dailyHours.map { $0 * Double(range.days.filter { c.workingDays.contains($0.weekday) }.count) } }
+        let derived = config.flatMap { c in c.dailyHours.map { $0 * Double(range.days.filter { c.workingDays.contains($0.weekday) && !isDayOff($0) }.count) } }
         let hours: Double?
         switch period {
-        case .day: hours = config.flatMap { $0.workingDays.contains(day.weekday) ? $0.dailyHours : nil }
+        case .day: hours = config.flatMap { $0.workingDays.contains(day.weekday) && !isDayOff(day) ? $0.dailyHours : nil }
         case .week: hours = config?.weeklyHours ?? derived
         case .month: hours = config?.monthlyHours ?? derived
         }
@@ -189,12 +191,13 @@ public enum Goals {
 
     /// Every week or month that touches `range`, oldest first.
     public static func history(_ period: Period, in range: ClosedRange<LocalDay>, totals: [LocalDay: DayTotals],
-                               configs: [GoalConfig], projectID: Int64? = nil, today: LocalDay, firstWeekday: Int) -> [PeriodResult] {
+                               configs: [GoalConfig], projectID: Int64? = nil, today: LocalDay, firstWeekday: Int,
+                               isDayOff: (LocalDay) -> Bool = { _ in false }) -> [PeriodResult] {
         var results: [PeriodResult] = []
         var day = range.lowerBound
         while day <= range.upperBound {
             let result = evaluate(period, containing: day, totals: totals, configs: configs, projectID: projectID,
-                                  today: today, firstWeekday: firstWeekday)
+                                  today: today, firstWeekday: firstWeekday, isDayOff: isDayOff)
             results.append(result)
             day = result.range.upperBound.adding(1)
         }

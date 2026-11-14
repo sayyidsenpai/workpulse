@@ -34,6 +34,39 @@ public enum Theme: String, Codable, CaseIterable, Sendable {
     case system, light, dark
 }
 
+/// One day off, or several in a row (leave), as local day indexes (see `LocalDay`).
+public struct DayOff: Codable, Equatable, Hashable, Sendable, Identifiable {
+    public var from: Int
+    public var to: Int
+    /// Optional, for example "Christmas Day".
+    public var name: String
+
+    public init(from: Int, to: Int, name: String = "") {
+        self.from = min(from, to); self.to = max(from, to); self.name = name
+    }
+
+    public var id: Int { from }
+    public var count: Int { to - from + 1 }
+    public func contains(_ day: Int) -> Bool { day >= from && day <= to }
+    public func overlaps(_ other: DayOff) -> Bool { from <= other.to && other.from <= to }
+}
+
+/// The record that lets the user undo "Today is a day off" until the next work hours start.
+public struct DayOffUndo: Codable, Equatable, Sendable {
+    public var day: Int
+    /// Sessions that were moved from work to non-work.
+    public var moved: [Int64]
+    public var movedSeconds: Double
+    /// The profile before the day off.
+    public var profile: Profile
+    /// False when the day was already in the list of days off.
+    public var added: Bool
+
+    public init(day: Int, moved: [Int64], movedSeconds: Double, profile: Profile, added: Bool) {
+        self.day = day; self.moved = moved; self.movedSeconds = movedSeconds; self.profile = profile; self.added = added
+    }
+}
+
 /// Work hours: the times at which the Work profile starts and ends by itself.
 ///
 /// All arithmetic is in "local seconds": seconds since 1970 in the wall-clock time of the Mac
@@ -45,6 +78,8 @@ public struct WorkSchedule: Codable, Equatable, Sendable {
     public var days: Set<Int> = [2, 3, 4, 5, 6]
     public var startMinutes = 8 * 60
     public var endMinutes = 16 * 60
+    /// Days off: no work hours on these days, so work on them is overtime.
+    public var daysOff: [DayOff] = []
 
     public init() {}
 
@@ -58,7 +93,10 @@ public struct WorkSchedule: Codable, Equatable, Sendable {
         days = c.value(.days, days)
         startMinutes = c.value(.startMinutes, startMinutes)
         endMinutes = c.value(.endMinutes, endMinutes)
+        daysOff = c.value(.daysOff, daysOff)
     }
+
+    public func isDayOff(_ day: Int) -> Bool { daysOff.contains { $0.contains(day) } }
 
     /// Start and End must differ and at least one day must be a work day.
     public var isUsable: Bool { enabled && !days.isEmpty && lengthMinutes > 0 }
@@ -67,7 +105,7 @@ public struct WorkSchedule: Codable, Equatable, Sendable {
 
     /// The window that starts on local day `day`, in local seconds; nil if that is not a work day.
     func window(startingOn day: Int) -> (start: Double, end: Double)? {
-        guard isUsable, days.contains(LocalDay(index: day).weekday) else { return nil }
+        guard isUsable, days.contains(LocalDay(index: day).weekday), !isDayOff(day) else { return nil }
         let start = Double(day) * 86400 + Double(startMinutes) * 60
         return (start, start + Double(lengthMinutes) * 60)
     }
@@ -321,6 +359,9 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var schedule = WorkSchedule()
     /// Tell the user once when work hours end while they still work.
     public var notifyWorkEnd = true
+    /// Tell the user once when work hours start (no question, no sound).
+    public var notifyWorkStart = true
+    public var dayOffUndo: DayOffUndo?
     /// After work hours, the Work profile ends after this many minutes without input.
     public var returnIdleMinutes = 15
     public var sounds = SoundMode.goalAndHours
@@ -351,6 +392,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
         profile = c.value(.profile, profile)
         schedule = c.value(.schedule, schedule)
         notifyWorkEnd = c.value(.notifyWorkEnd, notifyWorkEnd)
+        notifyWorkStart = c.value(.notifyWorkStart, notifyWorkStart)
+        dayOffUndo = c.value(.dayOffUndo, dayOffUndo)
         returnIdleMinutes = c.value(.returnIdleMinutes, returnIdleMinutes)
         sounds = c.value(.sounds, sounds)
         theme = c.value(.theme, theme)

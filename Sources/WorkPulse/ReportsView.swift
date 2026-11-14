@@ -151,8 +151,10 @@ struct ReportsView: View {
             .flatMap { $0 > 0 ? $0 * 3600 : nil }
         d.apps = Aggregator.distribution(sessions, in: range, kinds: [.work]) { $0.appName ?? "Manual entry" }
         d.appIDs = Dictionary(sessions.compactMap { s in s.appName.flatMap { name in s.bundleID.map { (name, $0) } } }, uniquingKeysWith: { first, _ in first })
-        d.weeks = Goals.history(.week, in: range, totals: d.totals, configs: model.goals, today: today, firstWeekday: firstWeekday)
-        d.months = Goals.history(.month, in: range, totals: d.totals, configs: model.goals, today: today, firstWeekday: firstWeekday)
+        d.weeks = Goals.history(.week, in: range, totals: d.totals, configs: model.goals, today: today, firstWeekday: firstWeekday,
+                                isDayOff: model.isDayOff(_:))
+        d.months = Goals.history(.month, in: range, totals: d.totals, configs: model.goals, today: today, firstWeekday: firstWeekday,
+                                 isDayOff: model.isDayOff(_:))
         d.pay = d.months.compactMap { m in
             Pay.entry(on: min(m.range.upperBound, today), in: model.pay).map {
                 PayRow(month: m.range.lowerBound, amount: $0.monthlyAmount, currency: $0.currency, work: m.workSeconds)
@@ -345,7 +347,8 @@ struct ReportsView: View {
                 name = Fmt.day(item.start, "MMMMyyyy")
                 top = months[c.month - 1]; bottom = current ? "This month" : String(c.year)
             }
-            let muted = granularity == .day && !current && workDays?.contains(item.start.weekday) == false
+            // Days that are not work days, and days off, have a muted label.
+            let muted = granularity == .day && !current && (workDays?.contains(item.start.weekday) == false || model.isDayOff(item.start))
             return Bucket(start: item.start, seconds: item.seconds, name: name, current: current, top: top, bottom: bottom, muted: muted)
         }
     }
@@ -651,7 +654,7 @@ struct ReportsView: View {
     /// Working days of the period and its number of work days: "4 of 5".
     private func days(_ row: PeriodResult) -> String {
         let config = Goals.config(on: min(row.range.upperBound, .today()), projectID: nil, in: model.goals)
-        let target = row.daysTarget ?? config.map { config in row.range.days.filter { config.workingDays.contains($0.weekday) }.count }
+        let target = row.daysTarget ?? config.map { config in row.range.days.filter { config.workingDays.contains($0.weekday) && !model.isDayOff($0) }.count }
         return target.map { "\(row.workingDays) of \($0)" } ?? String(row.workingDays)
     }
 

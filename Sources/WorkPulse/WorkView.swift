@@ -19,6 +19,7 @@ struct WorkView: View {
             }
             .wpCard(strong: true)
             .wpRise(1)
+            DaysOffCard().wpRise(2)
             Text("Changes apply from today. Earlier days keep their goals. WorkPulse calculates your weekly and monthly goals from your daily goal and your work days.")
                 .font(WP.font(12)).foregroundStyle(WP.caption).fixedSize(horizontal: false, vertical: true)
                 .wpRise(2)
@@ -334,5 +335,131 @@ private struct DialArc: Shape {
         path.addArc(center: CGPoint(x: rect.midX, y: rect.midY), radius: rect.width / 2,
                     startAngle: from, endAngle: from + .degrees(Double(length) / 4), clockwise: false)
         return path
+    }
+}
+
+/// Days off planned ahead: holidays and leave. Past days off stay, so reports do not change.
+struct DaysOffCard: View {
+    @Environment(AppModel.self) private var model
+    @State private var from = Date()
+    @State private var to = Date()
+    @State private var name = ""
+
+    private static let nameLimit = 40
+
+    var body: some View {
+        let today = LocalDay.today()
+        let planned = model.settings.schedule.daysOff.filter { $0.to >= today.index }
+        let entry = DayOff(from: LocalDay.today(from).index, to: LocalDay.today(to).index)
+        let overlaps = model.settings.schedule.daysOff.contains { $0.overlaps(entry) }
+        VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 2) {
+                SectionTitle("Days off")
+                Text("On a day off, WorkPulse does not start work and does not notify you. The goals of that week and month drop by one day.")
+                    .font(WP.font(12)).foregroundStyle(WP.caption).fixedSize(horizontal: false, vertical: true)
+            }
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .bottom, spacing: 12) { dateField("From", fromBinding, min: Date()); dateField("To", $to, min: from); nameField; addButton(overlaps) }
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack(alignment: .bottom, spacing: 12) { dateField("From", fromBinding, min: Date()); dateField("To", $to, min: from) }
+                    HStack(alignment: .bottom, spacing: 12) { nameField; addButton(overlaps) }
+                }
+            }
+            if overlaps {
+                Note(tone: .warn, text: "These dates overlap a day off in the list. Remove that day off first, or select other dates.")
+            }
+            if planned.isEmpty {
+                Text("No days off are planned. Add holidays and leave here, so WorkPulse does not start work on those days.")
+                    .font(WP.font(13)).foregroundStyle(WP.secondary).fixedSize(horizontal: false, vertical: true)
+                    .padding(.vertical, 10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .overlay(alignment: .top) { Rectangle().fill(WP.hairline).frame(height: 1) }
+            } else {
+                VStack(spacing: 0) {
+                    ForEach(Array(planned.enumerated()), id: \.element) { index, item in
+                        row(item, last: index == planned.count - 1)
+                    }
+                }
+                .overlay(alignment: .top) { Rectangle().fill(WP.hairline).frame(height: 1) }
+            }
+            Text("Past days off stay, so earlier reports do not change.")
+                .font(WP.font(12)).foregroundStyle(WP.caption)
+        }
+        .wpCard(strong: true)
+    }
+
+    /// From never goes after To: a later From moves To with it.
+    private var fromBinding: Binding<Date> {
+        Binding(get: { from }, set: { from = $0; if to < $0 { to = $0 } })
+    }
+
+    private func dateField(_ label: String, _ date: Binding<Date>, min: Date) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            FieldLabel(label)
+            HStack(spacing: 0) {
+                WPDateField(selection: date, elements: .yearMonthDay, minDate: Calendar.current.startOfDay(for: min)).accessibilityLabel(label)
+                Spacer(minLength: 0)
+            }
+            .wpField()
+            .frame(width: 160)
+        }
+    }
+
+    private var nameField: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            FieldLabel("Name (optional)")
+            TextField("", text: $name)
+                .textFieldStyle(.plain).font(WP.font(13, .medium)).foregroundStyle(WP.ink)
+                .accessibilityLabel("Name (optional)")
+                .onChange(of: name) { if name.count > Self.nameLimit { name = String(name.prefix(Self.nameLimit)) } }
+                .onSubmit(add)
+                .wpField()
+        }
+        .frame(minWidth: 140, maxWidth: .infinity)
+    }
+
+    private func addButton(_ overlaps: Bool) -> some View {
+        Button(action: add) { Label("Add day off", systemImage: "plus") }
+            .buttonStyle(WPButtonStyle())
+            .disabled(overlaps)
+            .fixedSize()
+    }
+
+    private func add() {
+        if model.addDaysOff(from: LocalDay.today(from), to: LocalDay.today(to), name: name) { name = "" }
+    }
+
+    private func row(_ item: DayOff, last: Bool) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: "calendar.badge.minus").font(.system(size: 14, weight: .semibold)).foregroundStyle(.white)
+                .frame(width: 32, height: 32)
+                .background(WP.navy, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 0) {
+                Text(Self.dates(item)).font(WP.font(13, .semibold)).monospacedDigit().foregroundStyle(WP.ink)
+                if !item.name.isEmpty { Text(item.name).font(WP.font(12)).foregroundStyle(WP.caption).lineLimit(1) }
+            }
+            Spacer(minLength: 8)
+            Text(item.count == 1 ? "1 day" : "\(item.count) days").font(WP.font(12)).monospacedDigit().foregroundStyle(WP.secondary)
+            Button { model.removeDayOff(item) } label: {
+                Image(systemName: "trash").font(.system(size: 13, weight: .semibold)).foregroundStyle(WP.red)
+                    .frame(width: 32, height: 32)
+                    .background(WP.field, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(WP.border))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Remove day off \(Self.dates(item))")
+        }
+        .padding(.vertical, 10)
+        .overlay(alignment: .bottom) { if !last { Rectangle().fill(WP.hairline).frame(height: 1) } }
+        .accessibilityElement(children: .combine)
+    }
+
+    /// "Thu, 24 Dec 2026" or "Tue, 29 Dec to Thu, 31 Dec 2026".
+    static func dates(_ item: DayOff) -> String {
+        let a = LocalDay(index: item.from), b = LocalDay(index: item.to)
+        if item.count == 1 { return Fmt.day(a) }
+        let sameYear = a.components.year == b.components.year
+        return "\(Fmt.day(a, sameYear ? "EEEdMMM" : "EEEdMMMyyyy")) to \(Fmt.day(b))"
     }
 }

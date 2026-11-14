@@ -9,6 +9,7 @@ final class ProfileTests: XCTestCase {
     var time: FakeTime!
     var engine: TrackingEngine!
     var hoursEnded = 0
+    var hoursStarted = 0
     let xcode = App(bundleID: "com.apple.dt.Xcode", name: "Xcode")
     let slack = App(bundleID: "com.tinyspeck.slackmacgap", name: "Slack")
     let weekdays: Set<Int> = [2, 3, 4, 5, 6]
@@ -25,7 +26,9 @@ final class ProfileTests: XCTestCase {
         engine = TrackingEngine(store: store, time: time)
         engine.recover()
         hoursEnded = 0
+        hoursStarted = 0
         engine.onWorkHoursEnded = { [unowned self] in hoursEnded += 1 }
+        engine.onWorkHoursStarted = { [unowned self] in hoursStarted += 1 }
     }
 
     private func useWorkHours(_ start: Int = 8, _ end: Int = 16) {
@@ -323,5 +326,119 @@ final class ProfileTests: XCTestCase {
         XCTAssertEqual(evaluate(.week, [own]).targetSeconds, 20 * h, "a goal that was set by hand is kept")
         XCTAssertEqual(evaluate(.month, [own]).targetSeconds, 80 * h)
         XCTAssertNil(evaluate(.week, [GoalConfig(effectiveFrom: monday)]).targetSeconds)
+    }
+
+    // MARK: Days off
+
+    func testWorkHoursStartIsAnnouncedOnce() throws {
+        try boot(at: 7.5)
+        useWorkHours()
+        engine.tick(idleSeconds: 0)
+        time.advance(31 * 60)                // 08.01
+        engine.tick(idleSeconds: 0)
+        time.advance(60)
+        engine.tick(idleSeconds: 0)
+        XCTAssertEqual(hoursStarted, 1)
+
+        engine.endWork()
+        time.advance(24 * 3600)              // Tuesday 08.02: Personal changes to Work, announced again
+        engine.tick(idleSeconds: 0)
+        XCTAssertEqual(hoursStarted, 2)
+    }
+
+    func testNoWorkHoursOnADayOff() throws {
+        try boot(at: 7.5)
+        engine.endWork()
+        useWorkHours()
+        engine.updateSettings { $0.schedule.daysOff = [DayOff(from: monday.index, to: monday.index, name: "Holiday")] }
+        time.advance(3600)                   // Monday 08.30
+        engine.tick(idleSeconds: 0)
+        XCTAssertEqual(engine.settings.profile, .personal)
+        XCTAssertEqual(hoursStarted, 0)
+        XCTAssertFalse(engine.inWorkHours)
+        XCTAssertTrue(engine.isDayOffToday)
+
+        time.advance(24 * 3600)              // Tuesday 08.30
+        engine.tick(idleSeconds: 0)
+        XCTAssertEqual(engine.settings.profile, .work)
+        XCTAssertEqual(hoursStarted, 1)
+    }
+
+    func testTodayIsADayOffMovesTodaysWorkAndCanBeUndone() throws {
+        try boot(at: 7.95)
+        useWorkHours()
+        engine.appActivated(xcode)
+        engine.tick(idleSeconds: 0)
+        time.advance(4 * 60)                 // 08.01: work hours start
+        engine.tick(idleSeconds: 0)
+        XCTAssertEqual(engine.settings.profile, .work)
+        time.advance(2 * 3600)               // 10.01
+        engine.tick(idleSeconds: 0)
+        XCTAssertEqual(total(try all(), .work), 2 * 3600, accuracy: 1)
+
+        engine.takeDayOff(moveWork: true)
+        XCTAssertEqual(total(try all(), .work), 0, "today's work is now non-work")
+        XCTAssertEqual(engine.settings.profile, .personal)
+        XCTAssertTrue(engine.isDayOffToday)
+        XCTAssertFalse(engine.isOvertime)
+        XCTAssertEqual(engine.settings.dayOffUndo?.movedSeconds ?? 0, 2 * 3600, accuracy: 1)
+
+        time.advance(600)                    // 10.11: no automatic start on a day off
+        engine.tick(idleSeconds: 0)
+        XCTAssertEqual(engine.settings.profile, .personal)
+
+        engine.undoDayOff()
+        XCTAssertEqual(total(try all(), .work), 2 * 3600, accuracy: 1, "the moved time is work again")
+        XCTAssertEqual(engine.settings.profile, .work)
+        XCTAssertFalse(engine.isDayOffToday)
+        XCTAssertNil(engine.settings.dayOffUndo)
+        engine.shutdown()
+        assertNoOverlap(try all())
+    }
+
+    func testKeepingTheWorkAndWorkingOnADayOffIsOvertime() throws {
+        useWorkHours()
+        engine.appActivated(xcode)
+        engine.tick(idleSeconds: 0)          // Monday 09.00, Work
+        time.advance(600)
+        engine.tick(idleSeconds: 0)
+        engine.takeDayOff(moveWork: false)
+        XCTAssertEqual(total(try all(), .work), 600, accuracy: 1, "the work stays")
+        engine.startWork()
+        XCTAssertTrue(engine.isOvertime)
+        time.advance(1200)
+        engine.shutdown()
+        XCTAssertEqual(Aggregator.overtime(try all(), on: monday, schedule: engine.settings.schedule), 1800, accuracy: 1,
+                       "all work on a day off is overtime")
+    }
+
+    func testUndoEndsWhenTheNextWorkHoursStart() throws {
+        useWorkHours()
+        engine.tick(idleSeconds: 0)
+        engine.takeDayOff(moveWork: true)
+        XCTAssertNotNil(engine.settings.dayOffUndo)
+        time.advance(23 * 3600 + 60)         // Tuesday 08.01
+        engine.tick(idleSeconds: 0)
+        XCTAssertNil(engine.settings.dayOffUndo)
+        XCTAssertEqual(engine.settings.profile, .work)
+    }
+
+    func testDaysOffLowerTheGoals() {
+        let config = GoalConfig(effectiveFrom: monday, dailyHours: 6, workingDays: weekdays)
+        func evaluate(_ period: Period) -> PeriodResult {
+            Goals.evaluate(period, containing: monday, totals: [:], configs: [config], today: monday, firstWeekday: 2,
+                           isDayOff: { $0 == monday })
+        }
+        XCTAssertNil(evaluate(.day).targetSeconds, "no daily goal on a day off")
+        XCTAssertEqual(evaluate(.week).targetSeconds, 24 * 3600)
+        XCTAssertEqual(evaluate(.month).targetSeconds, 120 * 3600)
+    }
+
+    func testDayOffRanges() {
+        let leave = DayOff(from: 12, to: 10)
+        XCTAssertEqual(leave.from, 10, "a range is stored in order")
+        XCTAssertEqual(leave.count, 3)
+        XCTAssertTrue(leave.overlaps(DayOff(from: 12, to: 14)))
+        XCTAssertFalse(leave.overlaps(DayOff(from: 13, to: 14)))
     }
 }

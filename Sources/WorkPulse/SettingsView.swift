@@ -66,6 +66,7 @@ struct SettingsView: View {
                 Button("Change in Work…") { withAnimation(.easeOut(duration: 0.15)) { model.tab = .work } }
                     .buttonStyle(WPButtonStyle())
             }
+            Toggle("Tell me when work hours start", isOn: model.binding(\.notifyWorkStart)).toggleStyle(WPSwitchStyle()).divided()
             Toggle("Tell me when work hours end", isOn: model.binding(\.notifyWorkEnd)).toggleStyle(WPSwitchStyle()).divided()
             row("After work hours, return to Personal when idle for") {
                 WPMenu("After work hours, return to Personal when idle for", selection: model.binding(\.returnIdleMinutes),

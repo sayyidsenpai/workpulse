@@ -41,6 +41,33 @@ extension AppModel {
             await capture(MainView().environment(self), size: NSSize(width: 1080, height: 1700), appearance: appearance,
                           to: folder.appendingPathComponent("settings-full\(suffix).png"))
         }
+        if Self.demo { await dayOffFlow(to: folder) }
+    }
+
+    /// Demo mode only (it changes the data): the day-off flow, step by step, and the Work screen in full.
+    private func dayOffFlow(to folder: URL) async {
+        let looks: [(String, NSAppearance.Name)] = [("", .aqua), ("-dark", .darkAqua)]
+        // Each capture closes its window, which ends the one-time offer: set the state again each time.
+        func shoot(_ name: String, offer: Bool = false, confirm: Bool = false) async {
+            for (suffix, look) in looks {
+                offerDayOff = offer
+                confirmingDayOff = confirm
+                await capture(DashboardView().environment(self), size: nil, appearance: look, to: folder.appendingPathComponent("\(name)\(suffix).png"))
+            }
+        }
+        tab = .work
+        for (suffix, look) in looks {
+            await capture(MainView().environment(self), size: NSSize(width: 1080, height: 1240), appearance: look,
+                          to: folder.appendingPathComponent("work-full\(suffix).png"))
+        }
+        endWork()
+        refresh()
+        await shoot("dayoff-1-offer", offer: true)
+        await shoot("dayoff-1b-reopened")
+        await shoot("dayoff-2-confirm", confirm: true)
+        takeDayOff(moveWork: true)
+        refresh()
+        await shoot("dayoff-3-dayoff")
     }
 
     /// Every status the popover can show, side by side. The state is set by hand for the picture only.

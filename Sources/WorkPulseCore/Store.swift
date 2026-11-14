@@ -149,6 +149,13 @@ public final class Store {
     }
 
     /// Moves sessions recorded as non-work to work: the user confirmed that this time was work.
+    /// The reverse of `markAsWork`: the user says this work time was not work (a day off).
+    public func markAsNonwork(_ ids: [Int64]) throws {
+        try db.transaction {
+            for id in ids { try db.run("UPDATE sessions SET kind='nonwork' WHERE id=? AND kind='work'", [id]) }
+        }
+    }
+
     public func markAsWork(_ ids: [Int64]) throws {
         try db.transaction {
             for id in ids { try db.run("UPDATE sessions SET kind='work' WHERE id=? AND kind='nonwork'", [id]) }

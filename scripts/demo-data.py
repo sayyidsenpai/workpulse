@@ -11,11 +11,16 @@ writes <folder>/demo-data (a WorkPulse data folder with 75 days of sample sessio
 
 Run both commands during the work hours of a work day (08.00 to 16.00, Monday to Friday),
 or give both the same TZ, for example TZ=America/Phoenix.
+
+With --holiday, today is a holiday that WorkPulse did not know: work from 08.00 to 10.00, then
+Safari. Render it with WORKPULSE_DEMO_APP="com.apple.Safari:Safari" for the day-off pictures.
 """
 import sqlite3, os, sys, json, time, datetime, shutil
-if len(sys.argv) != 2:
+holiday = '--holiday' in sys.argv
+args = [a for a in sys.argv[1:] if a != '--holiday']
+if len(args) != 1:
     sys.exit(__doc__)
-root = sys.argv[1]
+root = args[0]
 data = os.path.join(root, 'demo-data'); home = os.path.join(root, 'demo-home')
 # Only a folder this script made before is replaced.
 if os.path.exists(data) and not os.path.exists(os.path.join(data, 'workpulse.sqlite')):
@@ -57,15 +62,29 @@ while day < today:
         add(day, lunch + 2.05, 15.2 + v * 0.15, 'work', XCODE, 1)
         if v == 3: add(day, 16.0, 16.7, 'work', XCODE, 1)   # a day with overtime
     day += datetime.timedelta(days=1)
-add(today, 8, 10, 'work', XCODE, 1)
-add(today, 10, 10.33, 'idle')
-add(today, 10.33, min(now_h - 0.002, 15.9), 'work', XCODE, 1)
+if holiday:
+    # A holiday that WorkPulse did not know: 2h of work from 08.00, then the user notices at 10.00.
+    add(today, 8, 9.75, 'work', XCODE, 1)
+    add(today, 9.75, 10, 'work', ('Terminal', 'com.apple.Terminal'), 1)
+    add(today, 10, min(now_h - 0.002, 15.9), 'nonwork', SAFARI, 2)
+else:
+    add(today, 8, 10, 'work', XCODE, 1)
+    add(today, 10, 10.33, 'idle')
+    add(today, 10.33, min(now_h - 0.002, 15.9), 'work', XCODE, 1)
 for bid, name, cat in [('com.apple.dt.Xcode', 'Xcode', 1), ('com.apple.Safari', 'Safari', 2), ('com.apple.Terminal', 'Terminal', 1), ('com.apple.Notes', 'Notes', 1), ('com.apple.Music', 'Music', 2)]:
     db.execute("INSERT INTO app_rules(bundle_id, app_name, category_id) VALUES (?,?,?)", (bid, name, cat))
 epoch_day = (today - datetime.date(1970, 1, 1)).days
+def index(d): return (d - datetime.date(1970, 1, 1)).days
+# Planned days off after today: sample holidays and leave.
+year = today.year if today < datetime.date(today.year, 12, 24) else today.year + 1
+days_off = [{"from": index(datetime.date(year, 12, 24)), "to": index(datetime.date(year, 12, 24)), "name": "Leave"},
+            {"from": index(datetime.date(year, 12, 25)), "to": index(datetime.date(year, 12, 25)), "name": "Christmas Day"},
+            {"from": index(datetime.date(year, 12, 29)), "to": index(datetime.date(year, 12, 31)), "name": "Leave"},
+            {"from": index(datetime.date(year + 1, 1, 1)), "to": index(datetime.date(year + 1, 1, 1)), "name": "New Year's Day"}]
 db.execute("INSERT INTO goals(effective_from, daily_hours, min_day_minutes, working_days) VALUES (?,?,?,?)", (epoch_day - 90, 6, 30, 62))
 settings = {"onboarded": True, "profile": "work",
-            "schedule": {"enabled": True, "days": [2, 3, 4, 5, 6], "startMinutes": 480, "endMinutes": 960},
+            "schedule": {"enabled": True, "days": [2, 3, 4, 5, 6], "startMinutes": 480, "endMinutes": 960,
+                         "daysOff": days_off},
             "sleep": {"enabled": True, "bedtimeMinutes": 23 * 60, "leadMinutes": 30, "days": [1, 2, 3, 4, 5, 6, 7]},
             "lastBackupDay": epoch_day, "firstWeekday": 2}
 db.execute("INSERT INTO settings(key, value) VALUES ('app', ?)", (json.dumps(settings),))

@@ -101,6 +101,8 @@ public final class TrackingEngine {
     public var onError: ((Error) -> Void)?
     /// Work hours ended while the user still works: the Work profile stays on (overtime).
     public var onWorkHoursEnded: (() -> Void)?
+    /// Work hours started and WorkPulse changed to the Work profile by itself.
+    public var onWorkHoursStarted: (() -> Void)?
 
     public init(store: Store, time: TimeSource = SystemTime()) {
         self.store = store
@@ -192,6 +194,11 @@ public final class TrackingEngine {
         settings.schedule.lastEnd(atOrBefore: localNow).map { Date(timeIntervalSince1970: $0 - Double(time.tzOffset)) }
     }
 
+    /// The most recent start of work hours (for the start notification).
+    public var lastWorkHoursStart: Date? {
+        settings.schedule.lastStart(atOrBefore: localNow).map { Date(timeIntervalSince1970: $0 - Double(time.tzOffset)) }
+    }
+
     public var nextWorkHoursStart: Date? {
         settings.schedule.nextStart(after: localNow).map { Date(timeIntervalSince1970: $0 - Double(time.tzOffset)) }
     }
@@ -219,7 +226,12 @@ public final class TrackingEngine {
         var marks = settings
         if let start = schedule.lastStart(atOrBefore: now), start > settings.lastStartApplied {
             marks.lastStartApplied = start
-            if schedule.contains(local: now) { setProfile(.work, reason: "hours") }
+            // The undo of a day off lasts until the next work hours start.
+            settings.dayOffUndo = nil
+            if schedule.contains(local: now), settings.profile != .work {
+                setProfile(.work, reason: "hours")
+                onWorkHoursStarted?()
+            }
         }
         let agentBusy = agent != nil && settings.countAgentWork
         let away = idle || locked || asleep
@@ -501,6 +513,57 @@ public final class TrackingEngine {
             attempt { try store.markAsWork(ids) }
         }
         setProfile(.work, reason: "profile")
+        notify()
+    }
+
+    /// The local day index of today.
+    public var today: Int { Int((localNow / 86400).rounded(.down)) }
+
+    public var isDayOffToday: Bool { settings.schedule.isDayOff(today) }
+
+    /// Makes today a day off: WorkPulse changes to Personal and does not start work again today.
+    /// With `moveWork`, today's work time moves to non-work (the user says it was not work).
+    /// The change can be undone with `undoDayOff()` until the next work hours start.
+    public func takeDayOff(moveWork: Bool) {
+        let day = today
+        let previous = settings.profile
+        closeOpen("dayoff", at: time.uptime)   // the open interval is stored, so it can be moved too
+        var moved: [Int64] = []
+        var seconds: TimeInterval = 0
+        if moveWork {
+            // ponytail: only sessions that start today; a session that started yesterday stays as it is.
+            let work = ((try? store.sessions(days: LocalDay(index: day)...LocalDay(index: day))) ?? [])
+                .filter { $0.kind == .work && LocalDay(date: $0.start, tzOffset: $0.tzOffset).index == day }
+            moved = work.map(\.id)
+            seconds = work.reduce(0) { $0 + $1.duration }
+            attempt { try store.markAsNonwork(moved) }
+        }
+        let added = !settings.schedule.isDayOff(day)
+        if added {
+            settings.schedule.daysOff.append(DayOff(from: day, to: day))
+            settings.schedule.daysOff.sort { $0.from < $1.from }
+        }
+        settings.dayOffUndo = DayOffUndo(day: day, moved: moved, movedSeconds: seconds, profile: previous, added: added)
+        paused = false
+        settings.profile = .personal
+        attempt { try store.saveSettings(settings) }
+        clearEvidence()
+        reconcile("dayoff")
+        notify()
+    }
+
+    /// Reverses `takeDayOff`: the moved time is work again and the profile is as it was.
+    public func undoDayOff() {
+        guard let undo = settings.dayOffUndo else { return }
+        closeOpen("undo", at: time.uptime)
+        attempt { try store.markAsWork(undo.moved) }
+        if undo.added { settings.schedule.daysOff.removeAll { $0.from == undo.day && $0.to == undo.day } }
+        settings.dayOffUndo = nil
+        paused = false
+        settings.profile = undo.profile
+        attempt { try store.saveSettings(settings) }
+        clearEvidence()
+        reconcile("undo")
         notify()
     }
 

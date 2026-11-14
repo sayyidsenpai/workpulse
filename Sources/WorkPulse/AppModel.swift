@@ -36,7 +36,7 @@ struct Summary {
     /// Today's work time that an AI agent did.
     var agent: TimeInterval = 0
     /// This week's work days (and any other day with work), in order, and whether each was worked.
-    var weekDays: [(day: LocalDay, worked: Bool)] = []
+    var weekDays: [(day: LocalDay, worked: Bool, off: Bool)] = []
     /// Number of work days in a week.
     var weekDaysTarget = 0
 }
@@ -92,6 +92,13 @@ final class AppModel {
     var loginItemNote: String?
     var notificationStatus = "…"
     var isOvertime = false
+    var isDayOff = false
+    /// Set while today's day off can still be undone.
+    var dayOffUndo: DayOffUndo?
+    /// The popover shows the day-off confirmation instead of the status card.
+    var confirmingDayOff = false
+    /// True from "End work" in work hours until the popover closes: the Personal card asks once.
+    var offerDayOff = false
     var agentWorking = false
     var suggestion: Suggestion?
     var agents: [AgentInfo] = []
@@ -129,7 +136,9 @@ final class AppModel {
         engine.onChange = { [weak self] in self?.refresh() }
         engine.onError = { [weak self] error in self?.banner = "Storage error: \(error.localizedDescription)" }
         engine.onWorkHoursEnded = { [weak self] in self?.workHoursEnded() }
+        engine.onWorkHoursStarted = { [weak self] in self?.workHoursStarted() }
         reminders.onEndWork = { [weak self] in self?.endWork() }
+        reminders.onDayOff = { [weak self] in self?.takeDayOff(moveWork: true) }
         reloadReference()
         let monitor = ActivityMonitor(engine: engine)
         monitor.onTick = { [weak self] in self?.tick() }
@@ -139,7 +148,9 @@ final class AppModel {
         #if DEBUG
         if Self.demo {
             // Pictures for the documentation: a fixed front application instead of the real one.
-            engine.appActivated(.init(bundleID: "com.apple.dt.Xcode", name: "Xcode"))
+            // WORKPULSE_DEMO_APP="<bundle id>:<name>" picks another application in front.
+            let app = (ProcessInfo.processInfo.environment["WORKPULSE_DEMO_APP"] ?? "com.apple.dt.Xcode:Xcode").split(separator: ":")
+            engine.appActivated(.init(bundleID: String(app[0]), name: String(app.last ?? app[0])))
             engine.tick(idleSeconds: 0)
         } else {
             monitor.start()
@@ -210,9 +221,13 @@ final class AppModel {
         let scheduled = Goals.config(on: today, projectID: nil, in: goals)?.workingDays ?? settings.schedule.days
         summary.weekDays = week.days.compactMap { day in
             let worked = Goals.isWorkingDay(totals[day]?.work ?? 0, on: day, configs: goals)
-            return scheduled.contains(day.weekday) || worked ? (day: day, worked: worked) : nil
+            let off = settings.schedule.isDayOff(day.index)
+            return scheduled.contains(day.weekday) || worked ? (day: day, worked: worked, off: off && !worked) : nil
         }
-        summary.weekDaysTarget = scheduled.count
+        summary.weekDaysTarget = week.days.filter { scheduled.contains($0.weekday) && !settings.schedule.isDayOff($0.index) }.count
+        isDayOff = engine.isDayOffToday
+        dayOffUndo = settings.dayOffUndo.flatMap { $0.day == today.index ? $0 : nil }
+        if isDayOff || status != .personal { confirmingDayOff = false }
         isOvertime = engine.isOvertime
         agentWorking = engine.agentWorking
         workHoursEnd = engine.workHoursEnd
@@ -220,7 +235,7 @@ final class AppModel {
         nextWorkHoursStart = engine.nextWorkHoursStart
         if status != .paused { pausedAt = nil }
         let evidence = Int(engine.evidenceSeconds / 60)
-        suggestion = status == .personal && evidence >= Self.suggestionMinutes && settings.suggestionMutedDay != today.index
+        suggestion = status == .personal && !isDayOff && evidence >= Self.suggestionMinutes && settings.suggestionMutedDay != today.index
             ? Suggestion(app: engine.evidenceApp ?? "a work application", minutes: evidence) : nil
         refreshAgents()
         applyTheme()
@@ -251,8 +266,11 @@ final class AppModel {
 
     func evaluate(_ period: Period, _ totals: [LocalDay: DayTotals], projectID: Int64? = nil) -> PeriodResult {
         Goals.evaluate(period, containing: .today(), totals: totals, configs: goals, projectID: projectID,
-                       today: .today(), firstWeekday: settings.firstWeekday)
+                       today: .today(), firstWeekday: settings.firstWeekday, isDayOff: isDayOff(_:))
     }
+
+    /// For goals and reports: a day in the list of days off.
+    func isDayOff(_ day: LocalDay) -> Bool { settings.schedule.isDayOff(day.index) }
 
     var isWorking: Bool { status == .tracking(.work) }
 
@@ -264,7 +282,7 @@ final class AppModel {
         case .tracking(.idle), .idle: "moon"
         case .tracking, .waiting: "stopwatch"
         case .paused: "pause.circle"
-        case .personal, .stopped: "person.crop.circle"
+        case .personal, .stopped: isDayOff ? "calendar.badge.minus" : "person.crop.circle"
         }
     }
 
@@ -279,14 +297,14 @@ final class AppModel {
         case .tracking(.idle), .idle: "Idle · auto-paused"
         case .waiting: "Waiting for activity"
         case .paused: "Paused"
-        case .personal, .stopped: "Personal"
+        case .personal, .stopped: isDayOff ? "Day off" : "Personal"
         }
     }
 
     /// Menu bar text; refreshed with the summary (at least every 30 s), shown to the minute.
     var menuBarText: String? {
         let prefix = switch status {
-        case .personal, .stopped: "Personal · "
+        case .personal, .stopped: isDayOff ? "Day off · " : "Personal · "
         case .paused: "Paused · "
         case .idle, .tracking(.idle): "Idle · "
         case .tracking(.work) where isOvertime: "Overtime · "
@@ -319,6 +337,8 @@ final class AppModel {
         engine.endWork()
         reminders.clearWorkHoursEnded()
         Sounds.play(.down, mode: settings.sounds)
+        // Work ended early: ask one time, in this popover only, if today is a day off.
+        offerDayOff = engine.inWorkHours && !isDayOff
     }
 
     func pause() {
@@ -333,9 +353,73 @@ final class AppModel {
     }
 
     /// The answer "Not work": no more suggestions today.
+    // MARK: - Days off
+
+    /// From the Personal card in work hours: ask first when today already has work time.
+    func requestDayOff() {
+        if todayWork.apps.isEmpty { takeDayOff(moveWork: false) } else { confirmingDayOff = true }
+    }
+
+    func takeDayOff(moveWork: Bool) {
+        confirmingDayOff = false
+        offerDayOff = false
+        engine.takeDayOff(moveWork: moveWork)
+        reminders.clearWorkHoursStarted()
+    }
+
+    func undoDayOff() { engine.undoDayOff() }
+
+    /// Today's work time by application, largest first (for the day-off confirmation).
+    var todayWork: (apps: [(name: String, bundleID: String?, seconds: TimeInterval)], from: Date?, to: Date?) {
+        let day = LocalDay.today()
+        var sessions: [Session] = []
+        attempt { sessions = try store.sessions(days: day...day) }
+        var sums: [String: (bundleID: String?, seconds: TimeInterval)] = [:]
+        let now = Date()
+        var from: Date?
+        var to: Date?
+        for s in sessions where s.kind == .work && LocalDay(date: s.start, tzOffset: s.tzOffset) == day {
+            from = min(from ?? s.start, s.start)
+            to = max(to ?? s.end, s.endReason.isEmpty ? now : s.end)
+            // The open session is stored with its start as end; count it to now.
+            let seconds = s.endReason.isEmpty ? max(s.duration, now.timeIntervalSince(s.start)) : s.duration
+            let name = s.appName ?? "Created by hand"
+            sums[name, default: (s.bundleID, 0)].seconds += seconds
+        }
+        let apps = sums.map { (name: $0.key, bundleID: $0.value.bundleID, seconds: $0.value.seconds) }
+            .filter { $0.seconds >= 1 }.sorted { $0.seconds > $1.seconds }
+        return (apps, from, to)
+    }
+
+    /// Adds days off from the Work screen. Returns false when the range overlaps a day off in the list.
+    @discardableResult
+    func addDaysOff(from: LocalDay, to: LocalDay, name: String) -> Bool {
+        let entry = DayOff(from: from.index, to: to.index, name: name.trimmingCharacters(in: .whitespaces))
+        guard !settings.schedule.daysOff.contains(where: { $0.overlaps(entry) }) else { return false }
+        updateSettings {
+            $0.schedule.daysOff.append(entry)
+            $0.schedule.daysOff.sort { $0.from < $1.from }
+        }
+        return true
+    }
+
+    func removeDayOff(_ entry: DayOff) {
+        updateSettings { settings in
+            settings.schedule.daysOff.removeAll { $0 == entry }
+            if settings.dayOffUndo.map({ entry.contains($0.day) }) == true { settings.dayOffUndo = nil }
+        }
+    }
+
     func notWork() {
         engine.clearEvidence()
         updateSettings { $0.suggestionMutedDay = LocalDay.today().index }
+    }
+
+    /// Work hours started and WorkPulse changed to Work: say it once, quietly, without a question.
+    private func workHoursStarted() {
+        guard settings.notifyWorkStart else { return }
+        let start = engine.lastWorkHoursStart.map(Fmt.time) ?? ""
+        Task { await reminders.workHoursStarted(at: start) }
     }
 
     /// Work hours ended while the user still works: say it once, then leave the user alone.
@@ -355,6 +439,8 @@ final class AppModel {
     /// monthly goals follow from it and the work days.
     func saveWork(schedule: WorkSchedule, goalMinutes: Int) {
         let turnedOn = schedule.isUsable && !settings.schedule.isUsable
+        var schedule = schedule
+        schedule.daysOff = settings.schedule.daysOff   // days off are edited on their own
         if schedule != settings.schedule { updateSettings { $0.schedule = schedule } }
         var goal = Goals.config(on: .today(), projectID: nil, in: goals) ?? GoalConfig(effectiveFrom: .today())
         let before = goal

@@ -383,6 +383,7 @@ struct WPDateField: NSViewRepresentable {
     @Binding var selection: Date
     var elements: NSDatePicker.ElementFlags = .hourMinute
     var maxDate: Date? = nil
+    var minDate: Date? = nil
     var size: CGFloat = 13
     var weight: NSFont.Weight = .medium
 
@@ -406,6 +407,7 @@ struct WPDateField: NSViewRepresentable {
         context.coordinator.parent = self
         picker.datePickerElements = elements
         picker.maxDate = maxDate
+        picker.minDate = minDate
         picker.font = .monospacedDigitSystemFont(ofSize: size, weight: weight)
         picker.textColor = .labelColor
         picker.isEnabled = context.environment.isEnabled

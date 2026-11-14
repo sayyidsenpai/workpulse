@@ -10,6 +10,9 @@ private let weeklyIDs = (1...7).map { "sleep-\($0)" }
 private let workEndCategory = "WORK_HOURS_ENDED"
 private let endWorkAction = "END_WORK"
 private let workEndID = "work-hours-ended"
+private let workStartCategory = "WORK_HOURS_STARTED"
+private let dayOffAction = "DAY_OFF"
+private let workStartID = "work-hours-started"
 
 /// Sleep reminders as native, repeating local notifications. macOS keeps the schedule, so
 /// reminders fire even when WorkPulse is not running. This module only ever posts
@@ -22,6 +25,8 @@ final class SleepReminders: NSObject, UNUserNotificationCenterDelegate {
     private var center: UNUserNotificationCenter { .current() }
     /// The user pressed "End work" in the end-of-work-hours notification.
     var onEndWork: (() -> Void)?
+    /// The user pressed "Day off" in the start-of-work-hours notification.
+    var onDayOff: (() -> Void)?
 
     func configure() {
         guard available else { return }
@@ -32,6 +37,8 @@ final class SleepReminders: NSObject, UNUserNotificationCenterDelegate {
         center.setNotificationCategories([
             UNNotificationCategory(identifier: sleepCategory, actions: [snooze, dismiss], intentIdentifiers: []),
             UNNotificationCategory(identifier: workEndCategory, actions: [endWork], intentIdentifiers: []),
+            UNNotificationCategory(identifier: workStartCategory, actions: [UNNotificationAction(identifier: dayOffAction, title: "Day off")],
+                                   intentIdentifiers: []),
         ])
     }
 
@@ -43,6 +50,22 @@ final class SleepReminders: NSObject, UNUserNotificationCenterDelegate {
         content.body = "WorkPulse still counts your work."
         content.categoryIdentifier = workEndCategory
         try? await center.add(UNNotificationRequest(identifier: workEndID, content: content, trigger: nil))
+    }
+
+    /// One quiet notice when work hours start: no question and no sound. "Day off" shows on hover.
+    func workHoursStarted(at time: String) async {
+        guard available else { return }
+        let content = UNMutableNotificationContent()
+        content.title = time.isEmpty ? "Work hours started" : "Work hours started at \(time)"
+        content.body = "WorkPulse counts your work from now."
+        content.categoryIdentifier = workStartCategory
+        content.sound = nil
+        try? await center.add(UNNotificationRequest(identifier: workStartID, content: content, trigger: nil))
+    }
+
+    func clearWorkHoursStarted() {
+        guard available else { return }
+        center.removeDeliveredNotifications(withIdentifiers: [workStartID])
     }
 
     func clearWorkHoursEnded() {
@@ -113,6 +136,10 @@ final class SleepReminders: NSObject, UNUserNotificationCenterDelegate {
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
         if response.actionIdentifier == endWorkAction {
             await MainActor.run { self.onEndWork?() }
+            return
+        }
+        if response.actionIdentifier == dayOffAction {
+            await MainActor.run { self.onDayOff?() }
             return
         }
         guard response.actionIdentifier == snoozeAction else { return }

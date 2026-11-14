@@ -107,10 +107,6 @@ final class AppModel {
     var agentWorking = false
     var suggestion: Suggestion?
     var agents: [AgentInfo] = []
-    var pausedAt: Date?
-    /// The pause that has a break reminder scheduled, so each pause gets one reminder.
-    @ObservationIgnored private var breakReminderFor: Date?
-    static let breakReminderMinutes = 30
     var workHoursEnd: Date?
     var lastWorkHoursEnd: Date?
     var nextWorkHoursStart: Date?
@@ -147,7 +143,6 @@ final class AppModel {
         engine.onWorkHoursStarted = { [weak self] in self?.workHoursStarted() }
         reminders.onEndWork = { [weak self] in self?.endWork() }
         reminders.onDayOff = { [weak self] in self?.takeDayOff(moveWork: true) }
-        reminders.onResume = { [weak self] in self?.resume() }
         reloadReference()
         let monitor = ActivityMonitor(engine: engine)
         monitor.onTick = { [weak self] in self?.tick() }
@@ -220,7 +215,6 @@ final class AppModel {
         frontApp = engine.frontApp
         workSessionStart = engine.workSessionStart
         idleSince = engine.idleSince
-        pausedAt = engine.pausedAt
         let today = LocalDay.today()
         let week = Period.week.range(containing: today, firstWeekday: settings.firstWeekday)
         let month = Period.month.range(containing: today, firstWeekday: settings.firstWeekday)
@@ -253,18 +247,6 @@ final class AppModel {
         workHoursEnd = engine.workHoursEnd
         lastWorkHoursEnd = engine.lastWorkHoursEnd
         nextWorkHoursStart = engine.nextWorkHoursStart
-        if let start = pausedAt {
-            if breakReminderFor != start {
-                breakReminderFor = start
-                reminders.scheduleBreakReminder(at: start.addingTimeInterval(Double(Self.breakReminderMinutes) * 60),
-                                                minutes: Self.breakReminderMinutes)
-            }
-        } else {
-            if breakReminderFor != nil {
-                breakReminderFor = nil
-                reminders.cancelBreakReminder()
-            }
-        }
         let evidence = Int(engine.evidenceSeconds / 60)
         suggestion = status == .personal && !isDayOff && evidence >= Self.suggestionMinutes && settings.suggestionMutedDay != today.index
             ? Suggestion(app: engine.evidenceApp ?? "a work application", minutes: evidence) : nil
@@ -325,7 +307,6 @@ final class AppModel {
         case .tracking: goalReached ? "checkmark.circle" : "stopwatch.fill"
         case .nonwork, .ignored, .waiting: "stopwatch"
         case .idle: "moon"
-        case .paused: "pause.circle"
         case .personal: "person.crop.circle"
         case .dayOff: "calendar.badge.minus"
         }
@@ -340,7 +321,6 @@ final class AppModel {
         case .ignored: "Ignored application"
         case .idle: "Idle"
         case .waiting: "Waiting for activity"
-        case .paused: "Paused"
         case .personal: "Personal"
         case .dayOff: "Day off"
         }
@@ -353,7 +333,6 @@ final class AppModel {
         let prefix: String
         switch headline {
         case .personal, .dayOff: return statusText
-        case .paused: prefix = "Paused · "
         case .idle: prefix = "Idle · "
         case .overtime: prefix = "Overtime · "
         default: prefix = ""
@@ -384,19 +363,6 @@ final class AppModel {
         Sounds.play(.down, mode: settings.sounds)
         // Work ended early: ask one time, in this popover only, if today is a day off.
         offerDayOff = engine.inWorkHours && !isDayOff
-    }
-
-    func pause() {
-        engine.pause()
-        Sounds.play(.down, mode: settings.sounds)
-    }
-
-    func resume() {
-        engine.resume()
-        // While paused the monitor checks only every 30 s, so the engine may still think the
-        // user is idle. Read the input now: the click on Resume is fresh input.
-        monitor?.poll()
-        Sounds.play(.up, mode: settings.sounds)
     }
 
     /// The answer "Not work": no more suggestions today.

@@ -70,13 +70,13 @@ struct SettingsView: View {
                     .frame(width: 120)
             }
             .divided()
-            row("Pause when idle for") {
-                WPMenu("Pause when idle for", selection: model.binding(\.idleThreshold),
+            row("Idle after") {
+                WPMenu("Idle after", selection: model.binding(\.idleThreshold),
                        options: choices([60, 120, 180, 300, 600, 900, 1800]) { "\($0 / 60) min" })
                     .frame(width: 120)
             }
             .divided()
-            caption("Idle time starts at your last keyboard or mouse input. Screen lock and sleep pause tracking immediately.")
+            caption("Idle time starts at your last keyboard or mouse input. A locked screen counts as idle at once. While the Mac sleeps, nothing is recorded.")
         }
     }
 
@@ -219,7 +219,7 @@ struct SettingsView: View {
                 HStack(spacing: 8) { label; Spacer(minLength: 4); menu.frame(width: 290); sample }
                 VStack(alignment: .leading, spacing: 6) { label; HStack(spacing: 8) { menu; sample } }
             }
-            caption("Tracking controls are Start work, Pause, Resume, and End work. Sounds use the system volume. Each sound also has a visible change.")
+            caption("Tracking controls are Start work and End work. Sounds use the system volume. Each sound also has a visible change.")
         }
     }
 

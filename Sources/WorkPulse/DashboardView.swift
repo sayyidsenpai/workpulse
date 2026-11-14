@@ -122,17 +122,15 @@ extension AppModel {
     var hero: Hero {
         let model = self
         // In the Work profile the big number is "This session": work recorded since the work session
-        // began. It counts only while work is recorded; pause, idle and other applications stop it.
+        // began. It counts only while work is recorded; idle and other applications stop it.
         let session = model.summary.sessionWork, asOf = model.summary
         let working = model.isWorking
         let thisSession: (Date) -> String = { Fmt.clock(session + asOf.live(at: $0, working: working)) }
         let hours = model.workHoursNote
         let goal = model.goalReached
-        let pause = HeroAction(label: "Pause", symbol: "pause.fill", fill: goal ? WP.navy.opacity(0.32) : .white,
-                               text: goal ? .white : WP.fixedBlue) { model.pause() }
+        // One action while working: End work. It becomes the strong button once the daily goal is reached.
         let end = HeroAction(label: "End work", symbol: "stop.fill", fill: goal ? .white : WP.navy.opacity(0.32),
                              text: goal ? WP.fixedBlue : .white) { model.endWork() }
-        let lightPause = HeroAction(label: "Pause", symbol: "pause.fill", fill: WP.field, text: WP.ink) { model.pause() }
         let lightEnd = HeroAction(label: "End work", symbol: "stop.fill", fill: WP.track, text: WP.ink) { model.endWork() }
 
         switch model.headline {
@@ -143,17 +141,16 @@ extension AppModel {
                         label: "Overtime today", big: { Fmt.clock(overtime + asOf.live(at: $0, working: working)) }, meta: hours,
                         note: "You can stop now. Make time to rest.",
                         fill: WP.navy, text: .white, sub: WP.onNavy,
-                        first: HeroAction(label: "Pause", symbol: "pause.fill", fill: .white.opacity(0.16), text: .white) { model.pause() },
                         second: HeroAction(label: "End work", symbol: "stop.fill", fill: .white, text: WP.navy) { model.endWork() })
         case .agent:
             return Hero(title: model.statusText, symbol: "terminal", live: true,
                         label: "This session", big: thisSession, meta: hours,
                         note: "An agent works for you. This time counts as work, also when you are idle.",
-                        fill: WP.cobalt, text: .white, sub: WP.onCobalt, striped: true, first: pause, second: end)
+                        fill: WP.cobalt, text: .white, sub: WP.onCobalt, striped: true, second: end)
         case .tracking:
             return Hero(title: model.statusText, symbol: "record.circle", live: true,
                         label: "This session", big: thisSession, meta: hours,
-                        fill: WP.cobalt, text: .white, sub: WP.onCobalt, first: pause, second: end)
+                        fill: WP.cobalt, text: .white, sub: WP.onCobalt, second: end)
         case .nonwork, .ignored, .waiting:
             let app = model.frontApp?.name ?? "this application"
             return Hero(title: model.statusText, symbol: "minus.circle",
@@ -161,7 +158,7 @@ extension AppModel {
                         note: model.headline == .ignored ? "WorkPulse does not count time in \(app)."
                             : model.headline == .waiting ? "WorkPulse counts when you use an application."
                             : "Time in \(app) is not work time.",
-                        fill: WP.heroLight, text: WP.ink, sub: WP.secondary, first: lightPause, second: lightEnd)
+                        fill: WP.heroLight, text: WP.ink, sub: WP.secondary, second: lightEnd)
         case .idle:
             let since = model.idleSince
             return Hero(title: model.statusText, symbol: "moon",
@@ -170,14 +167,6 @@ extension AppModel {
                         note: "Idle time is not work time. WorkPulse counts again when you use the Mac.",
                         fill: WP.amber, text: WP.amberInk, sub: WP.amberInk,
                         second: HeroAction(label: "End work", symbol: "stop.fill", fill: WP.amberInk.opacity(0.16), text: WP.amberInk) { model.endWork() })
-        case .paused:
-            let at = model.pausedAt ?? model.summary.asOf
-            return Hero(title: model.statusText, symbol: "pause.circle", label: "Break since \(Fmt.time(at))",
-                        big: { Fmt.clock(max(0, $0.timeIntervalSince(at))) }, meta: hours,
-                        note: "WorkPulse records no time now. This session continues when you resume.",
-                        fill: WP.slate, text: .white, sub: WP.onSlate,
-                        first: HeroAction(label: "Resume", symbol: "play.fill", fill: .white, text: WP.fixedInk) { model.resume() },
-                        second: HeroAction(label: "End work", symbol: "stop.fill", fill: .black.opacity(0.38), text: .white) { model.endWork() })
         case .personal, .dayOff:
             let next = model.nextWorkHoursStart
             var hero = Hero(title: model.statusText, symbol: "person.crop.circle",
@@ -219,13 +208,11 @@ struct HeroAction {
     let text: Color
     let action: () -> Void
 
-    /// What the button does, as a tooltip and a VoiceOver hint. One text per button everywhere,
-    /// so Pause and End work always explain the same difference.
+    /// What the button does, as a tooltip and a VoiceOver hint. One text per button everywhere.
     var hint: String? {
         switch label {
-        case "Pause": "Take a break. WorkPulse records nothing until you resume."
-        case "Resume": "Continue work. WorkPulse counts again."
         case "End work": "Stop work for today. WorkPulse changes to Personal."
+        case "Start work", "Start overtime": "WorkPulse changes to Work and counts your work."
         default: nil
         }
     }

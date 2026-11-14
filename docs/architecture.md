@@ -67,7 +67,7 @@ Design points worth knowing:
   Raise the threshold or give that app a "never idle" rule.
 - Intervals shorter than one second (fast app switching) are dropped.
 - Screen lock is detected through the system's lock/unlock notifications, which Apple does not
-  document. If they ever stop arriving, the idle threshold still pauses tracking.
+  document. If they ever stop arriving, the idle threshold still records the time as idle.
 - A debug build accepts `--snapshot <folder>` to render every screen to PNG (used to check the UI
   where screen capture is unavailable). It is compiled out of release builds.
   `scripts/demo-data.py` makes the sample data for the pictures in the README; the comment at

@@ -17,7 +17,7 @@ a marker exists and when it was last touched. It never reads prompts, transcript
   "AI agent".
 - Your own work in a work app keeps its own application. Agent work fills in only where your own
   activity is not already work (idle, locked, non-work or ignored app), so nothing counts twice.
-- Pause and sleep still record nothing, and in the Personal profile agent time is not counted.
+- Sleep still records nothing, and in the Personal profile agent time is not counted.
 - If an agent is interrupted or crashes it cannot say it stopped. After 15 minutes without any
   hook signal (Settings › AI agents) the session is ended at the last signal, not at the time it
   was noticed.

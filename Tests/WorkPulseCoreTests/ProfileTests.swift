@@ -110,8 +110,8 @@ final class ProfileTests: XCTestCase {
         engine.appActivated(xcode)
         time.advance(600)
         engine.tick(idleSeconds: 400)                    // idle
-        engine.pause(); time.advance(60); engine.resume() // a break
-        XCTAssertEqual(engine.workSessionStart, start, "idle, pause and other apps do not end it")
+        engine.appActivated(slack); time.advance(60)       // another app
+        XCTAssertEqual(engine.workSessionStart, start, "idle and other apps do not end it")
         engine.shutdown()
         try boot(at: 11)
         XCTAssertEqual(engine.workSessionStart, start, "it survives a relaunch")

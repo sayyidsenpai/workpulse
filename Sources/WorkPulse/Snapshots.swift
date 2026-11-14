@@ -92,18 +92,16 @@ extension AppModel {
             heroes.append(hero)
         }
         summary.sessionWork = 2712
-        pausedAt = Date().addingTimeInterval(-312)
         idleSince = Date().addingTimeInterval(-900)
         add(.tracking(.work))
         add(.tracking(.work), agent: true)
         add(.tracking(.work), overtime: true)
         add(.tracking(.nonwork))
         add(.idle)
-        add(.paused)
         add(.personal)
         add(.personal, ask: true)
         add(.tracking(.excluded))
-        return LazyVGrid(columns: Array(repeating: GridItem(.fixed(364), spacing: 14), count: 3), spacing: 14) {
+        return LazyVGrid(columns: Array(repeating: GridItem(.fixed(364), spacing: 14), count: 4), spacing: 14) {
             ForEach(Array(heroes.enumerated()), id: \.offset) { HeroCard(hero: $0.element) }
         }
         .padding(14)

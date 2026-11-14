@@ -22,9 +22,13 @@ Profiles. There are two, and one is always on:
 - **Personal**: activity is still recorded, but none of it as work. Time in a work application is
   stored as non-work.
 
-"Start work" and "End work" change the profile. Pause/Resume suspends recording. Idle detection,
-screen lock and sleep pause tracking; idle time is trimmed back to the last keyboard or mouse
-input.
+"Start work" and "End work" change the profile. There is no Pause: when you step away, idle
+detection and screen lock record idle time, trimmed back to the last keyboard or mouse input, and
+sleep records nothing.
+
+"This session" in the popover is the work recorded since the Work profile started (Start work, or
+work hours starting). Idle and non-work applications stop it; it continues when you work again.
+End work ends the session.
 
 Work hours (Work screen) are optional: work days, Start and End. They act only at the two
 boundaries, and a choice you make by hand holds between them.

@@ -100,24 +100,18 @@ final class DayLifecycleTests: XCTestCase {
         pass(60)
         XCTAssertEqual(engine.status, .tracking(.work))
 
-        // Pause: nothing is recorded during the break; Resume continues the same session.
+        // A lunch break: the user walks away. Idle, not work; the session goes on.
         time.advance(at(monday, 12).timeIntervalSince(time.now))
         engine.tick(idleSeconds: 0)
-        engine.pause()
-        let pausedAt = time.now
-        XCTAssertEqual(engine.status, .paused)
-        XCTAssertEqual(engine.pausedAt, pausedAt)
+        let awayFrom = time.now
         time.advance(30 * 60)
         engine.tick(idleSeconds: 30 * 60)
-        XCTAssertEqual(engine.status, .paused, "idle during a pause changes nothing")
-        XCTAssertEqual(engine.settings.profile, .work, "inside work hours a pause keeps the Work profile")
-        engine.resume()
-        // The app reads the input at once after Resume (AppModel.resume polls): the click is input.
+        XCTAssertEqual(engine.status, .idle)
+        XCTAssertEqual(engine.settings.profile, .work, "inside work hours being away keeps the Work profile")
         engine.tick(idleSeconds: 0)
-        XCTAssertEqual(engine.status, .tracking(.work), "after Resume the status is not Idle")
-        XCTAssertEqual(engine.workSessionStart, session, "a pause does not end the session")
-        XCTAssertNil(engine.pausedAt)
-        let resumedAt = time.now
+        XCTAssertEqual(engine.status, .tracking(.work))
+        XCTAssertEqual(engine.workSessionStart, session, "a break does not end the session")
+        let backAt = time.now
 
         // An agent works while the user is in a non-work app and then idle: that counts as work.
         engine.appActivated(slack)
@@ -160,7 +154,7 @@ final class DayLifecycleTests: XCTestCase {
         assertNoOverlap(day)
         XCTAssertEqual(Aggregator.work(day, since: session), total(day, .work), accuracy: 0.001,
                        "the first session holds all of the day's work")
-        XCTAssertFalse(day.contains { $0.start < resumedAt && $0.end > pausedAt }, "no time is recorded during the pause")
+        XCTAssertFalse(day.contains { $0.kind == .work && $0.start < backAt && $0.end > awayFrom }, "no work is recorded during the break")
         XCTAssertTrue(day.filter { $0.kind == .excluded }.allSatisfy { $0.appName == nil && $0.bundleID == nil })
         XCTAssertGreaterThan(day.filter { $0.source == .agent && $0.kind == .work }.reduce(0) { $0 + $1.duration }, 0)
         XCTAssertEqual(day.filter { $0.end <= at(monday, 8) }.filter { $0.kind == .work }.count, 0, "nothing before work hours is work")
@@ -282,18 +276,5 @@ final class DayLifecycleTests: XCTestCase {
         XCTAssertEqual(engine.workSessionStart, session)
         XCTAssertEqual(Aggregator.work(try store.sessions(from: session), since: session), 5400, accuracy: 1,
                        "all of the session's work counts, also from an earlier week")
-    }
-
-    func testPauseBelongsToTheWorkProfileOnly() {
-        boot(monday, 9)
-        engine.endWork()
-        engine.pause()
-        XCTAssertFalse(engine.paused, "Personal records no work, so there is nothing to pause")
-        XCTAssertEqual(engine.status, .personal)
-        engine.startWork()
-        engine.pause()
-        XCTAssertEqual(engine.status, .paused)
-        engine.endWork()
-        XCTAssertNil(engine.pausedAt, "a change of profile ends the pause")
     }
 }

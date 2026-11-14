@@ -341,7 +341,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var mode = TrackingMode.automatic
     /// Automatic/hybrid tracking switched on (Stop turns it off until Start).
     public var autoEnabled = true
-    /// Seconds without input before tracking pauses.
+    /// Seconds without input before the time counts as idle.
     public var idleThreshold = 300
     /// Count apps that have no rule as work. Never applies to browsers.
     public var unclassifiedIsWork = false
@@ -373,7 +373,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
     /// Local day on which the user answered "Not work"; no suggestion is shown again that day.
     public var suggestionMutedDay: Int?
     /// When the current work session began: Start work, or work hours starting. nil in Personal.
-    /// Pause, idle and other applications do not change it; only a change of profile does.
+    /// Idle and other applications do not change it; only a change of profile does.
     public var workSessionStart: Date?
 
     public init() {}

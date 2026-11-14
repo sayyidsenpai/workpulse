@@ -21,7 +21,6 @@ enum WP {
     static let amber = Color(nsColor: rgb(0xF5A524))           // idle, attention
     static let amberInk = Color(nsColor: rgb(0x2B1700))
     static let amberHatch = Color(nsColor: rgb(0xB45309))
-    static let slate = Color(nsColor: rgb(0x3F4A5A))           // paused
     static let switchOff = Color(nsColor: rgb(0x6B7686))
     static let red = dyn(rgb(0xC62828), rgb(0xFF8A80))         // delete only
     // Text on the fixed colours above (the same in light and dark appearance).
@@ -29,7 +28,6 @@ enum WP {
     static let fixedBlue = Color(nsColor: rgb(0x1A4FC4))
     static let onCobalt = Color(nsColor: rgb(0xEAF1FF))
     static let onNavy = Color(nsColor: rgb(0xDCE6F7))
-    static let onSlate = Color(nsColor: rgb(0xE8ECF4))
 
     // Text.
     static let ink = dyn(rgb(0x0D1117), rgb(0xF2F5FA))

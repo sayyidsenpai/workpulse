@@ -35,7 +35,7 @@ public final class TrackingEngine {
     }
 
     public enum Status: Equatable, Sendable {
-        case stopped, paused, idle, waiting
+        case stopped, idle, waiting
         /// The Personal profile is on: activity is recorded, but none of it as work.
         case personal
         case tracking(SessionKind)
@@ -74,11 +74,6 @@ public final class TrackingEngine {
     public private(set) var frontApp: FrontApp?
     /// An explicit Start…Stop work session is running (manual and hybrid modes).
     public private(set) var manualActive = false
-    public private(set) var paused = false {
-        didSet { pausedAt = paused ? (pausedAt ?? time.now) : nil }
-    }
-    /// When the current pause began, or nil when not paused.
-    public private(set) var pausedAt: Date?
     public private(set) var idle = false
     public private(set) var locked = false
     public private(set) var asleep = false
@@ -160,12 +155,11 @@ public final class TrackingEngine {
         settings.mode == .manual ? manualActive : (settings.autoEnabled || manualActive)
     }
 
-    public var isRecording: Bool { wantsRecording && !paused && !asleep }
+    public var isRecording: Bool { wantsRecording && !asleep }
 
     public var status: Status {
         if !wantsRecording { return .stopped }
         if settings.profile == .personal { return .personal }
-        if paused { return .paused }
         // The user being away does not make it "idle" while an agent is recording work.
         if asleep || ((idle || locked) && !agentWorking) { return .idle }
         guard let open else { return .waiting }
@@ -174,9 +168,6 @@ public final class TrackingEngine {
 
     public var canStart: Bool { settings.mode == .automatic ? !settings.autoEnabled : !manualActive }
     public var canStop: Bool { wantsRecording }
-    /// Pause belongs to the Work profile: Personal records no work, so there is nothing to pause.
-    public var canPause: Bool { wantsRecording && !paused && settings.profile == .work }
-    public var canResume: Bool { wantsRecording && paused }
 
     /// The wall clock is behind the newest recorded session, so new time is appended after it.
     public var clockBehind: Bool { lastEnd.timeIntervalSince(time.now) > 60 }
@@ -263,7 +254,7 @@ public final class TrackingEngine {
             marks.lastEndApplied = end
             if settings.profile == .work, !schedule.contains(local: now) {
                 // Still at work a moment after the end: that is overtime. Otherwise the day is over.
-                if now - end < 300, !paused, !away || agentBusy { onWorkHoursEnded?() } else { setProfile(.personal, reason: "hours") }
+                if now - end < 300, !away || agentBusy { onWorkHoursEnded?() } else { setProfile(.personal, reason: "hours") }
             }
         }
         if settings.profile == .work, !schedule.contains(local: now), !agentBusy,
@@ -490,7 +481,6 @@ public final class TrackingEngine {
     // MARK: - User commands
 
     public func start() {
-        paused = false
         switch settings.mode {
         case .automatic: setAutoEnabled(true)
         case .manual: manualActive = true
@@ -501,27 +491,12 @@ public final class TrackingEngine {
     }
 
     public func stop() {
-        paused = false
         switch settings.mode {
         case .automatic: setAutoEnabled(false)
         case .manual: manualActive = false
         case .hybrid: if manualActive { manualActive = false } else { setAutoEnabled(false) }
         }
         reconcile("stop")
-        notify()
-    }
-
-    public func pause() {
-        guard canPause else { return }
-        paused = true
-        reconcile("pause")
-        notify()
-    }
-
-    public func resume() {
-        guard paused else { return }
-        paused = false
-        reconcile("resume")
         notify()
     }
 
@@ -568,7 +543,6 @@ public final class TrackingEngine {
             settings.schedule.daysOff.sort { $0.from < $1.from }
         }
         settings.dayOffUndo = DayOffUndo(day: day, moved: moved, movedSeconds: seconds, profile: previous, added: added)
-        paused = false
         settings.profile = .personal
         settings.workSessionStart = nil
         attempt { try store.saveSettings(settings) }
@@ -584,7 +558,6 @@ public final class TrackingEngine {
         attempt { try store.markAsWork(undo.moved) }
         if undo.added { settings.schedule.daysOff.removeAll { $0.from == undo.day && $0.to == undo.day } }
         settings.dayOffUndo = nil
-        paused = false
         settings.profile = undo.profile
         settings.workSessionStart = undo.profile == .work ? time.now : nil
         attempt { try store.saveSettings(settings) }
@@ -604,7 +577,6 @@ public final class TrackingEngine {
     /// starts with the Work profile (at `sessionStart`, default now) and ends with it.
     private func setProfile(_ profile: Profile, reason: String, sessionStart: Date? = nil) {
         guard settings.profile != profile else { return }
-        paused = false
         settings.profile = profile
         settings.workSessionStart = profile == .work ? (sessionStart ?? time.now) : nil
         attempt { try store.saveSettings(settings) }
@@ -625,7 +597,6 @@ public final class TrackingEngine {
         guard next != settings else { return }
         if next.mode != settings.mode {
             manualActive = false
-            paused = false
             if next.mode != .manual { next.autoEnabled = true }
         }
         settings = next
@@ -659,7 +630,6 @@ public final class TrackingEngine {
         closeOpen("rules", at: time.uptime)
         attempt { try store.recoverUnclosed() }  // e.g. a restored backup taken mid-session
         manualActive = false
-        paused = false
         clearEvidence()
         settings = Self.loadSettings(store)
         ensureWorkSession()

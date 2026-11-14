@@ -4,7 +4,7 @@ import Foundation
 /// The one place that decides it, so the three always agree. When several apply, the order of
 /// the checks below is the precedence: Overtime is said before an agent working.
 public enum Headline: Equatable, Sendable {
-    case overtime, agent, tracking, nonwork, ignored, idle, waiting, paused, personal, dayOff
+    case overtime, agent, tracking, nonwork, ignored, idle, waiting, personal, dayOff
 
     public init(status: TrackingEngine.Status, overtime: Bool, agent: Bool, dayOff: Bool) {
         switch status {
@@ -13,7 +13,6 @@ public enum Headline: Equatable, Sendable {
         case .tracking(.excluded): self = .ignored
         case .tracking(.idle), .idle: self = .idle
         case .waiting: self = .waiting
-        case .paused: self = .paused
         case .personal, .stopped: self = dayOff ? .dayOff : .personal
         }
     }

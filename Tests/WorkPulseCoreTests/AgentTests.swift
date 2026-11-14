@@ -82,13 +82,9 @@ final class AgentTests: XCTestCase {
         assertNoOverlap(sessions)
     }
 
-    func testAgentWorkRespectsPauseStopSleepAndTheSetting() throws {
+    func testAgentWorkRespectsStopSleepAndTheSetting() throws {
         engine.appActivated(slack)
-        engine.pause()
         engine.setAgent("Claude Code")
-        time.advance(100)
-        XCTAssertTrue(try store.sessions().isEmpty, "paused means nothing is recorded")
-        engine.resume()
         time.advance(100)
         engine.willSleep()
         time.now += 3600

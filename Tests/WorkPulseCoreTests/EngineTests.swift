@@ -277,13 +277,8 @@ final class EngineTests: XCTestCase {
 
     // MARK: Modes and controls
 
-    func testPauseResumeStopStart() throws {
+    func testStopStart() throws {
         engine.appActivated(xcode)
-        time.advance(100)
-        engine.pause()
-        XCTAssertEqual(engine.status, .paused)
-        time.advance(50)
-        engine.resume()
         time.advance(100)
         engine.stop()
         XCTAssertEqual(engine.status, .stopped)
@@ -294,22 +289,8 @@ final class EngineTests: XCTestCase {
         engine.shutdown()
 
         let sessions = try all()
-        XCTAssertEqual(sessions.map { $0.duration.rounded() }, [100, 100, 10])
-        XCTAssertEqual(sessions.map(\.endReason), ["pause", "stop", "quit"])
-    }
-
-    func testPauseKeepsTheWorkSessionAndKnowsWhenItBegan() throws {
-        engine.appActivated(xcode)
-        let session = try XCTUnwrap(engine.workSessionStart)
-        time.advance(100)
-        engine.pause()
-        XCTAssertEqual(engine.pausedAt, time.now)
-        time.advance(50)
-        engine.tick(idleSeconds: 50)
-        XCTAssertEqual(engine.pausedAt, time.now.addingTimeInterval(-50), "the pause start does not move")
-        engine.resume()
-        XCTAssertNil(engine.pausedAt)
-        XCTAssertEqual(engine.workSessionStart, session, "a pause does not end the work session")
+        XCTAssertEqual(sessions.map { $0.duration.rounded() }, [100, 10])
+        XCTAssertEqual(sessions.map(\.endReason), ["stop", "quit"])
     }
 
     func testWorkSinceCountsOnlyWorkFromTheStart() {
@@ -323,11 +304,10 @@ final class EngineTests: XCTestCase {
         XCTAssertEqual(Headline(status: .tracking(.work), overtime: false, agent: true, dayOff: false), .agent)
         XCTAssertEqual(Headline(status: .tracking(.work), overtime: false, agent: false, dayOff: false), .tracking)
         XCTAssertEqual(Headline(status: .tracking(.idle), overtime: true, agent: false, dayOff: false), .idle)
-        XCTAssertEqual(Headline(status: .paused, overtime: true, agent: false, dayOff: false), .paused)
         XCTAssertEqual(Headline(status: .personal, overtime: false, agent: false, dayOff: true), .dayOff)
         XCTAssertEqual(Headline(status: .stopped, overtime: false, agent: false, dayOff: false), .personal)
         XCTAssertFalse(Headline.dayOff.inWorkSession)
-        XCTAssertTrue(Headline.paused.inWorkSession)
+        XCTAssertTrue(Headline.idle.inWorkSession)
     }
 
     func testIdleSinceIsTheLastInput() throws {

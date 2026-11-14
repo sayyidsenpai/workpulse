@@ -14,7 +14,8 @@ extension AppModel {
     func snapshot(to folder: URL) async {
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         Motion.off = true
-        if Self.demo, let icon = NSImage(contentsOfFile: "Packaging/AppIcon.icns") { NSApp.applicationIconImage = icon }
+        // A debug binary has no app bundle, so macOS gives it a generic icon: use the real one.
+        if let icon = NSImage(contentsOfFile: "Packaging/AppIcon.icns") { NSApp.applicationIconImage = icon }
         for (suffix, appearance) in [("", NSAppearance.Name.aqua), ("-dark", .darkAqua)] {
             await capture(DashboardView().environment(self), size: nil, appearance: appearance,
                           to: folder.appendingPathComponent("dashboard\(suffix).png"))

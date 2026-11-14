@@ -93,6 +93,7 @@ extension AppModel {
         }
         sessionStart = Date().addingTimeInterval(-2712)
         pausedAt = Date()
+        idleSince = Date().addingTimeInterval(-900)
         add(.tracking(.work))
         add(.tracking(.work), agent: true)
         add(.tracking(.work), overtime: true)

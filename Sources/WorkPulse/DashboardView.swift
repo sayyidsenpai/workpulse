@@ -121,10 +121,12 @@ extension AppModel {
     /// One hero per state. Every state has its own colour, icon, title and sentence.
     var hero: Hero {
         let model = self
-        let current = model.frontApp.map { "Current session · \($0.name)" } ?? "Current session"
+        // The time since the last break (pause, idle, End work), across applications. The front
+        // application has its own card below, so its name is not here: the number is not per app.
+        let current = "Since your last break"
         let start = model.sessionStart
         let session: (Date) -> String = { now in Fmt.clock(start.map { now.timeIntervalSince($0) } ?? 0) }
-        let range = model.workHoursEnd.map { "Until \(Fmt.time($0))" } ?? start.map { "Since \(Fmt.time($0))" } ?? ""
+        let range = model.workHoursEnd.map { "Until \(Fmt.time($0))" } ?? start.map { "From \(Fmt.time($0))" } ?? ""
         let goal = model.goalReached
         let pause = HeroAction(label: "Pause", symbol: "pause.fill", fill: goal ? WP.navy.opacity(0.32) : .white,
                                text: goal ? .white : WP.fixedBlue) { model.pause() }
@@ -133,10 +135,16 @@ extension AppModel {
 
         switch model.status {
         case .tracking(.work) where model.isOvertime:
-            let from = max(start ?? .distantPast, model.lastWorkHoursEnd ?? .distantPast)
+            // All work outside work hours today, the same number as "overtime" in the Today card.
+            // A pause does not hide earlier overtime.
+            let overtime = model.summary.overtime, asOf = model.summary.asOf
+            let ended = model.lastWorkHoursEnd.flatMap { Calendar.current.isDateInToday($0) ? $0 : nil }
+            let starts = model.nextWorkHoursStart.flatMap { Calendar.current.isDateInToday($0) ? $0 : nil }
             return Hero(title: "Overtime", symbol: "clock", live: true,
-                        label: model.lastWorkHoursEnd.map { "Work hours ended at \(Fmt.time($0))" } ?? "Outside work hours",
-                        big: { Fmt.clock($0.timeIntervalSince(from)) }, meta: "Since \(Fmt.time(from))",
+                        label: "Overtime today",
+                        big: { Fmt.clock(overtime + max(0, $0.timeIntervalSince(asOf))) },
+                        meta: ended.map { "Work hours ended at \(Fmt.time($0))" }
+                            ?? starts.map { "Work hours start at \(Fmt.time($0))" } ?? "No work hours today",
                         note: "You can stop now. Make time to rest.",
                         fill: WP.navy, text: .white, sub: WP.onNavy,
                         first: HeroAction(label: "Pause", symbol: "pause.fill", fill: .white.opacity(0.16), text: .white) { model.pause() },
@@ -162,7 +170,8 @@ extension AppModel {
                         second: HeroAction(label: "End work", symbol: "stop.fill", fill: WP.track, text: WP.ink) { model.endWork() })
         case .tracking(.idle), .idle:
             return Hero(title: "Idle · auto-paused", symbol: "moon",
-                        label: start.map { "Idle time · since \(Fmt.time($0))" } ?? "Idle time", big: session,
+                        label: model.idleSince.map { "Idle time · since \(Fmt.time($0))" } ?? "Idle time",
+                        big: { now in Fmt.clock(model.idleSince.map { now.timeIntervalSince($0) } ?? 0) },
                         note: "Idle time is not work time. Tracking starts again when you use the Mac.",
                         fill: WP.amber, text: WP.amberInk, sub: WP.amberInk,
                         second: HeroAction(label: "End work", symbol: "stop.fill", fill: WP.amberInk.opacity(0.16), text: WP.amberInk) { model.endWork() })
@@ -372,21 +381,32 @@ struct WorkTimeCard: View {
             Spacer(minLength: 4)
             HStack(spacing: 4) {
                 ForEach(days, id: \.day) { item in
+                    // Filled: a planned day with work. Solid ring: work on a day that was not planned
+                    // (not counted). Dashed ring: a planned day without work. Struck through: a day off.
+                    let filled = item.worked && !item.extra
                     Text(String(Calendar.current.veryShortWeekdaySymbols[item.day.weekday - 1]))
                         .font(WP.font(11, .bold))
                         .strikethrough(item.off)
-                        .foregroundStyle(item.worked ? Color.white : WP.secondary)
+                        .foregroundStyle(filled ? Color.white : item.extra ? WP.textBlue : WP.secondary)
                         .frame(width: 20, height: 20)
-                        .background(item.worked ? WP.cobalt : item.off ? WP.heroLight : .clear, in: Circle())
+                        .background(filled ? WP.cobalt : item.off ? WP.heroLight : .clear, in: Circle())
                         .overlay {
-                            if item.off { Circle().strokeBorder(WP.switchOff, lineWidth: 1.5) }
+                            if item.extra { Circle().strokeBorder(WP.cobalt, lineWidth: 1.5) }
+                            else if item.off { Circle().strokeBorder(WP.switchOff, lineWidth: 1.5) }
                             else if !item.worked { Circle().strokeBorder(WP.caption, style: StrokeStyle(lineWidth: 1.5, dash: [3, 2])) }
                         }
                 }
             }
             .accessibilityHidden(true)
-            Text("\(days.filter(\.worked).count) of \(model.summary.weekDaysTarget)").font(WP.font(13, .semibold)).monospacedDigit().foregroundStyle(WP.ink)
+            let counted = days.filter { $0.worked && !$0.extra }.count
+            let extra = days.filter(\.extra).count
+            Text("\(counted) of \(model.summary.weekDaysTarget)" + (extra > 0 ? " · +\(extra)" : ""))
+                .font(WP.font(13, .semibold)).monospacedDigit().foregroundStyle(WP.ink)
+                .help(extra > 0 ? "Work on \(extra) other day\(extra == 1 ? "" : "s") is shown, not counted." : "")
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Working days this week: \(days.filter { $0.worked && !$0.extra }.count) of \(model.summary.weekDaysTarget)"
+            + (days.contains(where: \.extra) ? ", plus work on \(days.filter(\.extra).count) other day" : ""))
     }
 }
 

@@ -299,6 +299,29 @@ final class EngineTests: XCTestCase {
         XCTAssertEqual(sessions.map(\.endReason), ["pause", "stop", "quit"])
     }
 
+    func testPauseStartsANewStretch() throws {
+        engine.appActivated(xcode)
+        let first = engine.sessionStart
+        XCTAssertNotNil(first)
+        time.advance(100)
+        engine.pause()
+        XCTAssertNil(engine.sessionStart)
+        time.advance(50)
+        engine.resume()
+        XCTAssertEqual(engine.sessionStart, time.now)
+    }
+
+    func testIdleSinceIsTheLastInput() throws {
+        engine.appActivated(xcode)
+        XCTAssertNil(engine.idleSince)
+        time.advance(400)
+        engine.tick(idleSeconds: 300)
+        XCTAssertEqual(engine.idleSince, time.now.addingTimeInterval(-300))
+        time.advance(10)
+        engine.tick(idleSeconds: 1)
+        XCTAssertNil(engine.idleSince)
+    }
+
     func testManualModeRecordsOnlyExplicitSessions() throws {
         engine.updateSettings { $0.mode = .manual }
         engine.appActivated(slack)

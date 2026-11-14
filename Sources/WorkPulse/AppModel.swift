@@ -36,7 +36,8 @@ struct Summary {
     /// Today's work time that an AI agent did.
     var agent: TimeInterval = 0
     /// This week's work days (and any other day with work), in order, and whether each was worked.
-    var weekDays: [(day: LocalDay, worked: Bool, off: Bool)] = []
+    /// The days of this week to show: scheduled days, and other days with work (`extra`, not counted).
+    var weekDays: [(day: LocalDay, worked: Bool, off: Bool, extra: Bool)] = []
     /// Number of work days in a week.
     var weekDaysTarget = 0
 }
@@ -80,6 +81,7 @@ final class AppModel {
     var status = TrackingEngine.Status.stopped
     var frontApp: TrackingEngine.FrontApp?
     var sessionStart: Date?
+    var idleSince: Date?
     /// Bumped whenever stored data may have changed; history and reports reload on it.
     var revision = 0
     var banner: String?
@@ -210,6 +212,7 @@ final class AppModel {
         status = engine.status
         frontApp = engine.frontApp
         sessionStart = engine.sessionStart
+        idleSince = engine.idleSince
         let today = LocalDay.today()
         let week = Period.week.range(containing: today, firstWeekday: settings.firstWeekday)
         let month = Period.month.range(containing: today, firstWeekday: settings.firstWeekday)
@@ -224,7 +227,10 @@ final class AppModel {
         summary.weekDays = week.days.compactMap { day in
             let worked = Goals.isWorkingDay(totals[day]?.work ?? 0, on: day, configs: goals)
             let off = settings.schedule.isDayOff(day.index)
-            return scheduled.contains(day.weekday) || worked ? (day: day, worked: worked, off: off && !worked) : nil
+            // A worked day that was not planned (a weekend, a day off) is shown but not counted.
+            let planned = scheduled.contains(day.weekday) && !off
+            return scheduled.contains(day.weekday) || worked
+                ? (day: day, worked: worked, off: off && !worked, extra: worked && !planned) : nil
         }
         summary.weekDaysTarget = week.days.filter { scheduled.contains($0.weekday) && !settings.schedule.isDayOff($0.index) }.count
         isDayOff = engine.isDayOffToday

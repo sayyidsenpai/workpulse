@@ -95,6 +95,30 @@ final class ProfileTests: XCTestCase {
         XCTAssertEqual(engine.status, .personal)
     }
 
+    // MARK: The stretch since the last break
+
+    func testEndWorkStartsANewStretchAlsoWhenNothingElseChanges() throws {
+        // Slack is non-work in both profiles, so the recorded interval does not change on End work.
+        engine.appActivated(slack)
+        let first = try XCTUnwrap(engine.sessionStart)
+        time.advance(600)
+        engine.endWork()
+        XCTAssertEqual(engine.sessionStart, time.now)
+        XCTAssertNotEqual(engine.sessionStart, first)
+        time.advance(60)
+        engine.startWork()
+        XCTAssertEqual(engine.sessionStart, time.now)
+    }
+
+    func testStartWorkWithEvidenceKeepsTheStretch() throws {
+        engine.endWork()
+        engine.appActivated(xcode)
+        let start = try XCTUnwrap(engine.sessionStart)
+        time.advance(720)
+        engine.startWork(includeEvidence: true)
+        XCTAssertEqual(engine.sessionStart, start, "the evidence was work without a break")
+    }
+
     // MARK: Evidence ("Is this work?")
 
     func testEvidenceIsMovedToWorkOnRequest() throws {

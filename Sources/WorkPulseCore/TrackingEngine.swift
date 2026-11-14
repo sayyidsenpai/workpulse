@@ -80,8 +80,11 @@ public final class TrackingEngine {
     public private(set) var asleep = false
     /// AI agent(s) currently working, as reported by their hooks ("Claude Code", "Codex"); nil = none.
     public private(set) var agent: String?
-    /// Start of the current uninterrupted stretch of activity (reset by idle, pause, stop, sleep).
+    /// Start of the current stretch since the user's last break: reset by idle, pause, stop, sleep,
+    /// and by a change of profile (End work, Start work, work hours starting or ending).
     public private(set) var sessionStart: Date?
+    /// When the current idle stretch began (the last input), or nil when not idle.
+    public var idleSince: Date? { open?.desc.kind == .idle ? open?.startWall : nil }
     private var open: Open?
     private var lastEnd = Date.distantPast
     private var lastEndUptime = -TimeInterval.infinity
@@ -512,7 +515,8 @@ public final class TrackingEngine {
             let ids = evidenceIDs
             attempt { try store.markAsWork(ids) }
         }
-        setProfile(.work, reason: "profile")
+        // The evidence was work done without a break, so it stays part of the current stretch.
+        setProfile(.work, reason: "profile", keepSession: includeEvidence)
         notify()
     }
 
@@ -564,6 +568,7 @@ public final class TrackingEngine {
         attempt { try store.saveSettings(settings) }
         clearEvidence()
         reconcile("undo")
+        restartSession()
         notify()
     }
 
@@ -574,13 +579,20 @@ public final class TrackingEngine {
         notify()
     }
 
-    private func setProfile(_ profile: Profile, reason: String) {
+    private func setProfile(_ profile: Profile, reason: String, keepSession: Bool = false) {
         guard settings.profile != profile else { return }
         paused = false
         settings.profile = profile
         attempt { try store.saveSettings(settings) }
         clearEvidence()
         reconcile(reason)
+        if !keepSession { restartSession() }
+    }
+
+    /// A new stretch starts now. Set directly, not through `reconcile`: when the recorded activity
+    /// is the same in both profiles (a non-work or ignored application), `reconcile` changes nothing.
+    private func restartSession() {
+        sessionStart = open.flatMap { $0.desc.kind == .idle ? nil : time.now }
     }
 
     private func setAutoEnabled(_ on: Bool) {

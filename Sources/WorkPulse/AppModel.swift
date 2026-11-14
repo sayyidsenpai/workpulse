@@ -35,8 +35,7 @@ struct Summary {
     var overtime: TimeInterval = 0
     /// Today's work time that an AI agent did.
     var agent: TimeInterval = 0
-    /// This week's work days (and any other day with work), in order, and whether each was worked.
-    /// The days of this week to show: scheduled days, and other days with work (`extra`, not counted).
+    /// This week's work days and any other day with work (`extra`: not planned), in order.
     var weekDays: [(day: LocalDay, worked: Bool, off: Bool, extra: Bool)] = []
     /// Number of work days in a week.
     var weekDaysTarget = 0
@@ -231,7 +230,7 @@ final class AppModel {
         summary.weekDays = week.days.compactMap { day in
             let worked = Goals.isWorkingDay(totals[day]?.work ?? 0, on: day, configs: goals)
             let off = settings.schedule.isDayOff(day.index)
-            // A worked day that was not planned (a weekend, a day off) is shown but not counted.
+            // A worked day that was not planned (a weekend, a day off) is marked, and counted like in Reports.
             let planned = scheduled.contains(day.weekday) && !off
             return scheduled.contains(day.weekday) || worked
                 ? (day: day, worked: worked, off: off && !worked, extra: worked && !planned) : nil
@@ -378,6 +377,9 @@ final class AppModel {
 
     func resume() {
         engine.resume()
+        // While paused the monitor checks only every 30 s, so the engine may still think the
+        // user is idle. Read the input now: the click on Resume is fresh input.
+        monitor?.poll()
         Sounds.play(.up, mode: settings.sounds)
     }
 
@@ -619,6 +621,9 @@ final class AppModel {
         // window instead of the control. The window moves by its top edge, as a normal window does.
         window.isMovableByWindowBackground = false
         window.setContentSize(size)
+        // With a full-size content view the view also covers the title bar, but the content size
+        // excludes it: the window became 32 pt taller than a fixed-size view, an empty band below it.
+        if !resizable { window.setFrame(NSRect(origin: window.frame.origin, size: size), display: false) }
         window.isReleasedWhenClosed = false
         window.center()
         return window

@@ -397,7 +397,8 @@ struct WorkTimeCard: View {
             HStack(spacing: 4) {
                 ForEach(days, id: \.day) { item in
                     // Filled: a planned day with work. Solid ring: work on a day that was not planned
-                    // (not counted). Dashed ring: a planned day without work. Struck through: a day off.
+                    // (a weekend, a day off); it counts, like in Reports. Dashed ring: a planned day
+                    // without work. Struck through: a day off.
                     let filled = item.worked && !item.extra
                     Text(String(Calendar.current.veryShortWeekdaySymbols[item.day.weekday - 1]))
                         .font(WP.font(11, .bold))
@@ -413,15 +414,15 @@ struct WorkTimeCard: View {
                 }
             }
             .accessibilityHidden(true)
-            let counted = days.filter { $0.worked && !$0.extra }.count
+            // Every day with work counts, the same as Reports and the weekly days goal.
             let extra = days.filter(\.extra).count
-            Text("\(counted) of \(model.summary.weekDaysTarget)" + (extra > 0 ? " · +\(extra)" : ""))
+            Text("\(days.filter(\.worked).count) of \(model.summary.weekDaysTarget)")
                 .font(WP.font(13, .semibold)).monospacedDigit().foregroundStyle(WP.ink)
-                .help(extra > 0 ? "Work on \(extra) other day\(extra == 1 ? "" : "s") is shown, not counted." : "")
+                .help(extra > 0 ? "Includes work on \(extra) day\(extra == 1 ? "" : "s") outside your work days." : "")
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Working days this week: \(days.filter { $0.worked && !$0.extra }.count) of \(model.summary.weekDaysTarget)"
-            + (days.contains(where: \.extra) ? ", plus work on \(days.filter(\.extra).count) other day" : ""))
+        .accessibilityLabel("Working days this week: \(days.filter(\.worked).count) of \(model.summary.weekDaysTarget)"
+            + (days.contains(where: \.extra) ? ", including \(days.filter(\.extra).count) outside your work days" : ""))
     }
 }
 

@@ -42,7 +42,10 @@ struct OnboardingView: View {
         }
         // 28 pt on all sides: the header starts right of and below the close button (x 13…27, y 6…20).
         .padding(28)
-        .frame(width: Self.size.width, height: Self.size.height)
+        // The window sets the height (Self.size, title bar included). A fixed height here made the
+        // window grow by the title bar height, which left an empty band below the content.
+        .frame(width: Self.size.width)
+        .frame(maxHeight: .infinity)
         .background { Backdrop() }
         .ignoresSafeArea()
         .onAppear(perform: load)

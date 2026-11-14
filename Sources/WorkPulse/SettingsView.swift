@@ -27,15 +27,11 @@ struct SettingsView: View {
         // 1046 pt: the content width of the largest window in the design.
         Screen(maxWidth: 1046) {
             ScreenHeader(title: "Settings", subtitle: "")
-            ViewThatFits(in: .horizontal) {
-                // Two columns from 696 pt (the ideal width); below that they stack. The columns
-                // have one height: the last card of the shorter column grows to the common end.
-                HStack(alignment: .top, spacing: 16) {
-                    VStack(spacing: 16) { tracking; general; data }.frame(minWidth: 340, idealWidth: 340, maxWidth: .infinity)
-                    VStack(spacing: 16) { agents; sounds; compensation }.frame(minWidth: 340, idealWidth: 340, maxWidth: .infinity)
-                }
-                .fixedSize(horizontal: false, vertical: true)
-                VStack(spacing: 16) { tracking; general; data; agents; sounds; compensation }
+            // Two columns from 696 pt; below that they stack. The columns have one height: the last
+            // card of the shorter column grows to the common end.
+            SideBySide(leading: 340, equalHeights: true) {
+                VStack(spacing: 16) { tracking; general; data }
+                VStack(spacing: 16) { agents; sounds; compensation }
             }
             deleteData
             support

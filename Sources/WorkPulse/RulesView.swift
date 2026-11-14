@@ -34,12 +34,9 @@ struct RulesView: View {
             }
             Note(text: "Browsers do not count as work automatically. WorkPulse does not read tabs, sites, or URLs. Give the browser a category. Its time counts only in the Work profile.")
             // Side by side when there is room, one below the other in a narrow window.
-            ViewThatFits(in: .horizontal) {
-                HStack(alignment: .top, spacing: 16) {
-                    applications.frame(minWidth: 480, idealWidth: 480, maxWidth: .infinity)
-                    categories.frame(width: 320)
-                }
-                VStack(spacing: 16) { applications; categories }
+            SideBySide(leading: 480, trailing: 320) {
+                applications
+                categories
             }
         }
         .onChange(of: model.revision, initial: true) { loadApps() }
@@ -109,6 +106,7 @@ struct RulesView: View {
     }
 
     // ponytail: every row is built at once (two menus each); use a lazy stack if lists pass a few hundred applications.
+    // Rows avoid ViewThatFits and the card sits in SideBySide: measuring the list several times made the screen slow.
     private var applications: some View {
         VStack(alignment: .leading, spacing: 0) {
             ViewThatFits(in: .horizontal) {
@@ -161,9 +159,14 @@ struct RulesView: View {
             HStack(spacing: 10) {
                 AppTile(name: row.name, bundleID: row.id, size: 28)
                 // "Browser" is after the name, or below it when the column is too narrow for one line.
-                ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 10) { name; if browser { badge } }
-                    VStack(alignment: .leading, spacing: 2) { name; if browser { badge } }
+                // Only browser rows measure both forms; the other rows are a plain name (a long list).
+                if browser {
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: 10) { name; badge }
+                        VStack(alignment: .leading, spacing: 2) { name; badge }
+                    }
+                } else {
+                    name
                 }
             },
             WPMenu("Category for \(row.name)", selection: bind(row, \.categoryID), options: model.categories.map { ($0.id, $0.name) }),

@@ -84,10 +84,11 @@ struct ReportsView: View {
             trend
             Group {
                 if balanced {
-                    ViewThatFits(in: .horizontal) {
-                        HStack(alignment: .top, spacing: 12) { applications; goalHistory }
-                            .fixedSize(horizontal: false, vertical: true)
-                        stacked
+                    // Side by side when the goal card gets 452 pt (its table stays whole) and the
+                    // applications card 308 pt; one height for both.
+                    SideBySide(leading: 308, trailing: 452, spacing: 12, equalHeights: true) {
+                        applications
+                        goalHistory
                     }
                 } else {
                     stacked

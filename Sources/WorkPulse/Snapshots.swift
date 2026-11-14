@@ -38,11 +38,15 @@ extension AppModel {
                 await capture(MainView().environment(self), size: NSSize(width: 1080, height: Self.demo ? 720 : 800), appearance: appearance,
                               to: folder.appendingPathComponent("\(tab.rawValue.lowercased())\(suffix).png"))
             }
-            // Settings is longer than the window: one tall picture shows all of it.
-            await capture(MainView().environment(self), size: NSSize(width: 1080, height: 1700), appearance: appearance,
-                          to: folder.appendingPathComponent("settings-full\(suffix).png"))
+            // Reports and Settings are longer than the window: one tall picture shows all of each.
+            for tab in [MainTab.reports, .settings] {
+                self.tab = tab
+                await capture(MainView().environment(self), size: NSSize(width: 1080, height: 1700), appearance: appearance,
+                              to: folder.appendingPathComponent("\(tab.rawValue.lowercased())-full\(suffix).png"))
+            }
         }
-        if Self.demo { await dayOffFlow(to: folder) }
+        // The day-off flow changes the sample data: run it only when its pictures are wanted.
+        if Self.demo, Self.only.map({ "dayoff work-full".contains($0) || $0.contains("dayoff") }) ?? true { await dayOffFlow(to: folder) }
     }
 
     /// Demo mode only (it changes the data): the day-off flow, step by step, and the Work screen in full.

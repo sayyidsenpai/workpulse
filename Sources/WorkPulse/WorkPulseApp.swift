@@ -52,8 +52,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 Task { @MainActor in
                     try? await Task.sleep(for: .seconds(3))
                     FileHandle.standardError.write(Data("cycle start\n".utf8))
+                    // WORKPULSE_CYCLE=work,apps limits the cycle to those screens.
+                    let names = (env["WORKPULSE_CYCLE"] ?? "").lowercased().split(separator: ",").map(String.init)
+                    let tabs = MainTab.allCases.filter { names.contains($0.rawValue.lowercased()) }
                     for _ in 0..<3 {
-                        for tab in MainTab.allCases {
+                        for tab in tabs.isEmpty ? MainTab.allCases : tabs {
                             withAnimation(.easeOut(duration: 0.15)) { AppModel.shared.tab = tab }
                             try? await Task.sleep(for: .seconds(1.5))
                         }

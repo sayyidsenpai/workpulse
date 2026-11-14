@@ -424,6 +424,51 @@ struct WPDateField: NSViewRepresentable {
     }
 }
 
+/// Two views side by side when the width allows, else one below the other. Unlike ViewThatFits,
+/// which lays out every candidate (and nests badly), it lays each view out once per pass: this
+/// matters for long lists such as the Apps table.
+struct SideBySide: Layout {
+    /// Least width of the first view when the two are side by side.
+    var leading: CGFloat
+    /// Width of the second view, or nil to share the width equally (each at least `leading`).
+    var trailing: CGFloat?
+    var spacing: CGFloat = 16
+    /// Side by side, both views get the height of the taller one.
+    var equalHeights = false
+
+    private func widths(_ width: CGFloat) -> (CGFloat, CGFloat)? {
+        if let trailing { return width >= leading + spacing + trailing ? (width - spacing - trailing, trailing) : nil }
+        let half = (width - spacing) / 2
+        return half >= leading ? (half, half) : nil
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        guard subviews.count == 2 else { return .zero }
+        let width = proposal.width ?? (leading + spacing + (trailing ?? leading))
+        if let (a, b) = widths(width) {
+            let first = subviews[0].sizeThatFits(.init(width: a, height: nil)).height
+            let second = subviews[1].sizeThatFits(.init(width: b, height: nil)).height
+            return CGSize(width: width, height: max(first, second))
+        }
+        let first = subviews[0].sizeThatFits(.init(width: width, height: nil)).height
+        let second = subviews[1].sizeThatFits(.init(width: width, height: nil)).height
+        return CGSize(width: width, height: first + spacing + second)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        guard subviews.count == 2 else { return }
+        if let (a, b) = widths(bounds.width) {
+            let height: CGFloat? = equalHeights ? bounds.height : nil
+            subviews[0].place(at: bounds.origin, proposal: .init(width: a, height: height))
+            subviews[1].place(at: CGPoint(x: bounds.minX + a + spacing, y: bounds.minY), proposal: .init(width: b, height: height))
+        } else {
+            let first = subviews[0].sizeThatFits(.init(width: bounds.width, height: nil)).height
+            subviews[0].place(at: bounds.origin, proposal: .init(width: bounds.width, height: first))
+            subviews[1].place(at: CGPoint(x: bounds.minX, y: bounds.minY + first + spacing), proposal: .init(width: bounds.width, height: nil))
+        }
+    }
+}
+
 /// A menu with one selected value, drawn as an outlined field: the same height, border and
 /// corner as the buttons and text fields beside it.
 struct WPMenu<Value: Hashable>: View {

@@ -343,7 +343,6 @@ struct SettingsView: View {
         .background(WP.red.opacity(0.05), in: shape)
         .background(WP.cardStrong, in: shape)
         .overlay(shape.strokeBorder(WP.red))
-        .wpRise(7)
     }
 
     private func deleteRow(_ title: String, _ text: String, button: String, action: @escaping () -> Void) -> some View {
@@ -368,7 +367,6 @@ struct SettingsView: View {
         VStack(alignment: .leading, spacing: spacing) { content() }
             .frame(maxWidth: .infinity, maxHeight: fills ? .infinity : nil, alignment: .topLeading)
             .wpCard(strong: true)
-            .wpRise(index)
     }
 
     private var line: some View { Rectangle().fill(WP.hairline).frame(height: 1).accessibilityHidden(true) }

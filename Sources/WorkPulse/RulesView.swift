@@ -33,7 +33,6 @@ struct RulesView: View {
                     .shadow(color: WP.cobalt.opacity(0.3), radius: 5, y: 4)
             }
             Note(text: "Browsers do not count as work automatically. WorkPulse does not read tabs, sites, or URLs. Give the browser a category. Its time counts only in the Work profile.")
-                .wpRise(1)
             // Side by side when there is room, one below the other in a narrow window.
             ViewThatFits(in: .horizontal) {
                 HStack(alignment: .top, spacing: 16) {
@@ -42,7 +41,6 @@ struct RulesView: View {
                 }
                 VStack(spacing: 16) { applications; categories }
             }
-            .wpRise(2)
         }
         .onChange(of: model.revision, initial: true) { loadApps() }
         .confirmationDialog("Delete the category “\(deleting?.name ?? "")”?",

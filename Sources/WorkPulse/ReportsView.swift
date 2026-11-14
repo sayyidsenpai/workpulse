@@ -68,7 +68,6 @@ struct ReportsView: View {
     @State private var goalPeriod = Period.week
     @State private var first = LocalDay.today()
     @State private var data = ReportData()
-    @State private var grown = false
 
     private static let plotHeight: CGFloat = 180
     private static let labelHeight: CGFloat = 30
@@ -81,8 +80,8 @@ struct ReportsView: View {
         Screen {
             ScreenHeader(title: "Reports", subtitle: "") { exportButtons }
             filters
-            tiles.wpRise(1)
-            trend.wpRise(2)
+            tiles
+            trend
             Group {
                 if balanced {
                     ViewThatFits(in: .horizontal) {
@@ -94,11 +93,9 @@ struct ReportsView: View {
                     stacked
                 }
             }
-            .wpRise(3)
-            if !data.pay.isEmpty { compensation.wpRise(4) }
+            if !data.pay.isEmpty { compensation }
         }
         .onChange(of: query, initial: true) { load() }
-        .onAppear { withAnimation(.easeOut(duration: 0.7).delay(0.3)) { grown = true } }
     }
 
     // MARK: Data
@@ -436,7 +433,6 @@ struct ReportsView: View {
         let height = bucket.seconds > 0 ? max(2, Self.plotHeight * CGFloat(bucket.seconds / top)) : 0
         return bar(current: bucket.current, radius: min(6, barWidth / 2))
             .frame(width: barWidth, height: height)
-            .scaleEffect(y: grown || reduceMotion ? 1 : 0, anchor: .bottom)
             .frame(width: slot, height: Self.plotHeight, alignment: .bottom)
             .contentShape(Rectangle())
             .help("\(bucket.name): \(bucket.seconds > 0 ? Fmt.duration(bucket.seconds) : "no work")")

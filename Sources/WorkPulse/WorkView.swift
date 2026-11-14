@@ -18,11 +18,9 @@ struct WorkView: View {
                 }
             }
             .wpCard(strong: true)
-            .wpRise(1)
-            DaysOffCard().wpRise(2)
+            DaysOffCard()
             Text("Changes apply from today. Earlier days keep their goals. WorkPulse calculates your weekly and monthly goals from your daily goal and your work days.")
                 .font(WP.font(12)).foregroundStyle(WP.caption).fixedSize(horizontal: false, vertical: true)
-                .wpRise(2)
         }
         .onAppear(perform: load)
         .onChange(of: model.settings.schedule) { load() }

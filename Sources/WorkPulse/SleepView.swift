@@ -42,14 +42,12 @@ struct SleepView: View {
         Screen {
             ScreenHeader(title: "Sleep", subtitle: "A reminder is only a notification. It does not stop a work session, change tracked time, or close an application.")
             TimelineView(.everyMinute) { context in hero(context.date) }
-                .wpRise(1)
             ViewThatFits(in: .horizontal) {
                 HStack(alignment: .top, spacing: 16) { scheduleCard; side }
                     .fixedSize(horizontal: false, vertical: true)   // both columns get the height of the taller one
                     .frame(minWidth: 696, idealWidth: 696, maxWidth: .infinity)   // two columns of 340 or more
                 VStack(spacing: 16) { scheduleCard; side }
             }
-            .wpRise(2)
         }
         .animation(.easeInOut(duration: 0.25), value: off)
         .onAppear { model.rescheduleReminders(requestPermission: false) }

@@ -57,15 +57,14 @@ struct HistoryView: View {
                         }
                         .buttonStyle(WPButtonStyle())
                     }
-                    filters.wpRise(0)
+                    filters
                     let layout = wide ? AnyLayout(HStackLayout(alignment: .top, spacing: 16)) : AnyLayout(VStackLayout(spacing: 16))
                     layout {
-                        table.frame(maxWidth: .infinity).wpRise(1)
+                        table.frame(maxWidth: .infinity)
                         if let editing {
                             SessionEditor(session: editing) { self.editing = nil }
                                 .id(editing.id)   // a different session starts a new draft
                                 .frame(maxWidth: wide ? 320 : .infinity)
-                                .wpRise(2)
                                 .id("editor")
                         }
                     }
@@ -417,7 +416,7 @@ private struct HistoryRow: View {
                 Group {
                     if live {
                         HStack(spacing: 6) {
-                            Circle().fill(.white).frame(width: 6, height: 6).modifier(Pulse())
+                            LiveDot(size: 6, color: .white).frame(width: 6, height: 6)
                             Text("Now").font(WP.font(12, .semibold))
                         }
                         .foregroundStyle(.white)

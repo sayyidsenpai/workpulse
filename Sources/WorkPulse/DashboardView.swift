@@ -242,7 +242,7 @@ struct HeroCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
-                Image(systemName: hero.symbol).font(.system(size: 16, weight: .bold)).modifier(Pulse(active: hero.live))
+                LiveSymbol(name: hero.symbol, size: 16, color: hero.text, live: hero.live).frame(width: 20, height: 20)
                     .id(hero.symbol + (hero.live ? "-live" : ""))
                 Text(hero.title).font(WP.font(14, .semibold)).lineLimit(1)
                 Spacer(minLength: 8)

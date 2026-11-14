@@ -40,6 +40,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         source.resume()
         sigterm = source
         #if DEBUG
+        // WORKPULSE_OPEN=<tab name>: open the main window at launch (for profiling with sample data).
+        if let name = ProcessInfo.processInfo.environment["WORKPULSE_OPEN"],
+           let tab = MainTab.allCases.first(where: { $0.rawValue.lowercased() == name.lowercased() }) {
+            let env = ProcessInfo.processInfo.environment
+            if env["WORKPULSE_NO_MOTION"] != nil { Motion.off = true }
+            if env["WORKPULSE_NO_GLASS"] != nil { Backdrop.glass = false }
+            AppModel.shared.showMain(tab)
+            // WORKPULSE_CYCLE: switch through every screen three times, then quit (CPU profiling).
+            if env["WORKPULSE_CYCLE"] != nil {
+                Task { @MainActor in
+                    try? await Task.sleep(for: .seconds(3))
+                    FileHandle.standardError.write(Data("cycle start\n".utf8))
+                    for _ in 0..<3 {
+                        for tab in MainTab.allCases {
+                            withAnimation(.easeOut(duration: 0.15)) { AppModel.shared.tab = tab }
+                            try? await Task.sleep(for: .seconds(1.5))
+                        }
+                    }
+                    FileHandle.standardError.write(Data("cycle end\n".utf8))
+                    NSApp.terminate(nil)
+                }
+            }
+        }
         let arguments = CommandLine.arguments
         if let i = arguments.firstIndex(of: "--snapshot"), arguments.count > i + 1 {
             Task {

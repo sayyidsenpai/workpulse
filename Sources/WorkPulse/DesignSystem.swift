@@ -120,9 +120,12 @@ struct Wallpaper: View {
 
 /// The background of a window: the blurred desktop, the wallpaper colours, then the glass panel.
 struct Backdrop: View {
+    /// Profiling switch (debug runs): draw the backdrop without the behind-window blur.
+    nonisolated(unsafe) static var glass = true
+
     var body: some View {
         ZStack {
-            Glass()
+            if Self.glass { Glass() }
             Wallpaper().opacity(0.85)
             WP.panel
         }
@@ -504,19 +507,16 @@ struct WPBar: View {
     var color: Color = WP.cobalt
     var height: CGFloat = 8
     var label = ""
-    @State private var grown = false
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         let value = min(1, max(0, fraction))
         GeometryReader { geo in
             ZStack(alignment: .leading) {
                 Capsule().fill(WP.track)
-                Capsule().fill(color).frame(width: max(value > 0 ? height : 0, geo.size.width * (grown || reduceMotion ? value : 0)))
+                Capsule().fill(color).frame(width: max(value > 0 ? height : 0, geo.size.width * value))
             }
         }
         .frame(height: height)
-        .onAppear { withAnimation(.easeOut(duration: 0.9).delay(0.3)) { grown = true } }
         .animation(.linear(duration: 0.2), value: value)
         .accessibilityElement()
         .accessibilityLabel(label)
@@ -622,6 +622,70 @@ struct AppTile: View {
     }
 }
 
+/// The "live" pulse as a Core Animation layer animation: it runs in the render server, so the app
+/// does no work per frame (a SwiftUI opacity animation, or a symbol effect, updated the view graph
+/// about 60 times a second while a window was open). It stops with Reduce Motion.
+enum LayerPulse {
+    @MainActor static func apply(to layer: CALayer?, active: Bool) {
+        guard let layer else { return }
+        let on = active && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        if on, layer.animation(forKey: "pulse") == nil {
+            let pulse = CABasicAnimation(keyPath: "opacity")
+            pulse.fromValue = 1
+            pulse.toValue = 0.45
+            pulse.duration = 1
+            pulse.autoreverses = true
+            pulse.repeatCount = .infinity
+            pulse.isRemovedOnCompletion = false
+            pulse.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            layer.add(pulse, forKey: "pulse")
+        } else if !on {
+            layer.removeAnimation(forKey: "pulse")
+        }
+    }
+}
+
+/// A status symbol that pulses while `live` is true.
+struct LiveSymbol: NSViewRepresentable {
+    let name: String
+    let size: CGFloat
+    let color: Color
+    var live = false
+
+    func makeNSView(context: Context) -> NSImageView {
+        let view = NSImageView()
+        view.wantsLayer = true
+        view.imageScaling = .scaleNone
+        view.setAccessibilityElement(false)
+        return view
+    }
+
+    func updateNSView(_ view: NSImageView, context: Context) {
+        let config = NSImage.SymbolConfiguration(pointSize: size, weight: .bold)
+        view.image = NSImage(systemSymbolName: name, accessibilityDescription: nil)?.withSymbolConfiguration(config)
+        view.contentTintColor = NSColor(color)
+        LayerPulse.apply(to: view.layer, active: live)
+    }
+}
+
+/// A small round dot that pulses (the "Now" badge).
+struct LiveDot: NSViewRepresentable {
+    let size: CGFloat
+    let color: Color
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        view.wantsLayer = true
+        view.layer?.cornerRadius = size / 2
+        return view
+    }
+
+    func updateNSView(_ view: NSView, context: Context) {
+        view.layer?.backgroundColor = NSColor(color).cgColor
+        LayerPulse.apply(to: view.layer, active: true)
+    }
+}
+
 /// A slow pulse for the "live" indicator (still with Reduce Motion).
 struct Pulse: ViewModifier {
     var active = true
@@ -631,7 +695,7 @@ struct Pulse: ViewModifier {
     func body(content: Content) -> some View {
         content.opacity(active && dim && !reduceMotion ? 0.45 : 1)
             .onAppear {
-                guard active, !reduceMotion else { return }
+                guard active, !reduceMotion, !Motion.off else { return }
                 withAnimation(.easeInOut(duration: 1).repeatForever(autoreverses: true)) { dim = true }
             }
     }

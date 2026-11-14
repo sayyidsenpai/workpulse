@@ -13,8 +13,6 @@ struct MainView: View {
                     BannerView(text: banner) { model.banner = nil }.padding([.horizontal, .top], 16)
                 }
                 screen
-                    .id(model.tab)
-                    .transition(.opacity)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(WP.content.ignoresSafeArea())
@@ -64,7 +62,7 @@ private struct Sidebar: View {
             VStack(spacing: 2) {
                 ForEach(MainTab.allCases) { tab in
                     SidebarItem(tab: tab, selected: model.tab == tab) {
-                        withAnimation(.easeOut(duration: 0.15)) { model.tab = tab }
+                        model.tab = tab
                     }
                 }
             }
@@ -113,7 +111,7 @@ private struct StatusCard: View {
         let hero = model.hero
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 8) {
-                Image(systemName: hero.symbol).font(.system(size: 12, weight: .bold)).modifier(Pulse(active: hero.live))
+                LiveSymbol(name: hero.symbol, size: 12, color: hero.text, live: hero.live).frame(width: 16, height: 16)
                     .id(hero.symbol + (hero.live ? "-live" : ""))
                 Text(hero.title).font(WP.font(12, .semibold)).lineLimit(1)
             }

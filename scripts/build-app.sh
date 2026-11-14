@@ -18,11 +18,13 @@ BIN="$(swift build -c release $ARCHS --show-bin-path)/WorkPulse" &&
 { [ -f Packaging/AppIcon.icns ] || {
     swift scripts/make-icon.swift build/AppIcon.iconset &&
     iconutil -c icns build/AppIcon.iconset -o Packaging/AppIcon.icns; }; } &&
+{ [ -f Packaging/SleepBell.caf ] || swift scripts/make-sleep-bell.swift Packaging/SleepBell.caf; } &&
 rm -rf "$APP" &&
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" &&
 cp "$BIN" "$APP/Contents/MacOS/WorkPulse" &&
 cp Packaging/Info.plist "$APP/Contents/Info.plist" &&
 cp Packaging/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns" &&
+cp Packaging/SleepBell.caf "$APP/Contents/Resources/SleepBell.caf" &&
 cp scripts/agent-hook.sh "$APP/Contents/Resources/agent-hook.sh" &&
 chmod 755 "$APP/Contents/Resources/agent-hook.sh" &&
 # Ad-hoc signature ("-"): needs no Apple Developer account. It satisfies macOS on the Mac that

@@ -112,7 +112,9 @@ final class SleepReminders: NSObject, UNUserNotificationCenterDelegate {
             when.minute = trigger.minute
             let request = UNNotificationRequest(identifier: "sleep-\(trigger.weekday)", content: content(settings),
                                                 trigger: UNCalendarNotificationTrigger(dateMatching: when, repeats: true))
-            try? await center.add(request)
+            do { try await center.add(request) } catch {
+                notelog.error("sleep reminder \(trigger.weekday) not scheduled: \(error.localizedDescription, privacy: .public)")
+            }
         }
     }
 
@@ -120,7 +122,12 @@ final class SleepReminders: NSObject, UNUserNotificationCenterDelegate {
         guard available else { return }
         let request = UNNotificationRequest(identifier: "sleep-test", content: content(settings),
                                             trigger: UNTimeIntervalNotificationTrigger(timeInterval: 2, repeats: false))
-        try? await center.add(request)
+        do {
+            try await center.add(request)
+            notelog.notice("test reminder posted (sound \(settings.sound, privacy: .public))")
+        } catch {
+            notelog.error("test reminder failed: \(error.localizedDescription, privacy: .public)")
+        }
     }
 
     private func content(_ settings: SleepSettings) -> UNMutableNotificationContent {
@@ -130,7 +137,8 @@ final class SleepReminders: NSObject, UNUserNotificationCenterDelegate {
         content.title = "Time to wind down"
         content.body = settings.leadMinutes > 0 ? "Bedtime is at \(time), in \(settings.leadMinutes) minutes." : "It's \(time): bedtime."
         content.categoryIdentifier = sleepCategory
-        content.sound = settings.sound ? .default : nil
+        // Its own soft bell (Contents/Resources/SleepBell.caf): lower and slower than the work chimes.
+        content.sound = settings.sound ? UNNotificationSound(named: UNNotificationSoundName("SleepBell.caf")) : nil
         content.userInfo = ["snooze": settings.snoozeMinutes]
         return content
     }

@@ -278,7 +278,11 @@ struct SleepView: View {
             return ("exclamationmark.triangle.fill", WP.warnInk, WP.ink, "Notifications are not available",
                     "This copy of WorkPulse is not an application bundle. macOS cannot show its reminders.")
         }
-        if status.hasPrefix("Allowed") { return ("checkmark.circle.fill", WP.green, WP.greenInk, "Notifications are allowed", nil) }
+        if status.hasPrefix("Allowed") {
+            // macOS delivers the reminder but a Focus can silence it: no banner, no sound.
+            return ("checkmark.circle.fill", WP.green, WP.greenInk, "Notifications are allowed",
+                    "A Focus can silence reminders. To see them during a Focus, add WorkPulse to the allowed apps of that Focus.")
+        }
         if status.hasPrefix("Denied") {
             return ("exclamationmark.triangle.fill", WP.warnInk, WP.ink, "Notifications are not allowed",
                     "macOS does not show the reminders. Allow notifications for WorkPulse in Notification Settings.")

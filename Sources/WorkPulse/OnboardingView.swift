@@ -361,8 +361,14 @@ struct OnboardingView: View {
     /// Only applications that already have the Work category start as work: WorkPulse makes no guess.
     private func load() {
         guard apps.isEmpty else { return }
-        if model.settings.schedule.isUsable { schedule = model.settings.schedule }
-        goal = model.dailyGoalMinutes ?? goal
+        if model.settings.schedule.isUsable {
+            schedule = model.settings.schedule
+        } else if let days = Goals.config(on: .today(), projectID: nil, in: model.goals)?.workingDays, !days.isEmpty {
+            // An earlier version stored work days with the goals: start from those days.
+            schedule.days = days
+        }
+        // The goal can never be longer than the work hours.
+        goal = min(model.dailyGoalMinutes ?? goal, max(30, schedule.lengthMinutes / 30 * 30))
         var rows: [String: AppRow] = [:]
         for app in NSWorkspace.shared.runningApplications where app.activationPolicy == .regular {
             guard let id = app.bundleIdentifier, id != Bundle.main.bundleIdentifier else { continue }

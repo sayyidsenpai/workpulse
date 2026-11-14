@@ -89,7 +89,15 @@ extension AppModel {
             isOvertime = overtime
             agentWorking = agent
             suggestion = ask ? Suggestion(app: "Xcode", minutes: 12) : nil
+            // The overtime card as it looks after work hours: 42 minutes after a 16.00 end.
+            let saved = (workHoursEnd, lastWorkHoursEnd, summary.overtime)
+            if overtime {
+                workHoursEnd = nil
+                lastWorkHoursEnd = Calendar.current.date(bySettingHour: 16, minute: 0, second: 0, of: Date())
+                summary.overtime = 42 * 60
+            }
             heroes.append(hero)
+            (workHoursEnd, lastWorkHoursEnd, summary.overtime) = saved
         }
         summary.sessionWork = 2712
         idleSince = Date().addingTimeInterval(-900)

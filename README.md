@@ -8,7 +8,7 @@ A menu bar app for macOS that counts your work time and tells you when you can s
 Everything stays on your Mac.
 
 <p align="center">
-  <img src="docs/images/popover.png" width="392" alt="The WorkPulse popover: Tracking work, current session 0:45:12 in Xcode, today 2h 41m of 6h 00m">
+  <img src="docs/images/popover.png" width="392" alt="The WorkPulse popover: Tracking work, this session 0:45:12, End work, today 2h 07m of 6h 00m">
 </p>
 
 ## What it does
@@ -29,7 +29,7 @@ Everything stays on your Mac.
 Each status has its own colour, icon and sentence, so you never read the status from colour alone.
 
 <p align="center">
-  <img src="docs/images/states.png" width="760" alt="Nine status cards: Tracking work, Agent working, Overtime, Active non-work, Idle, Paused, Personal, Personal with the question Is this work?, Ignored application">
+  <img src="docs/images/states.png" width="760" alt="Eight status cards: Tracking work, Agent working, Overtime, Active non-work, Idle, Personal, Personal with the question Is this work?, Ignored application">
 </p>
 
 Set your work hours on a 24-hour dial. The daily goal cannot be longer than your work hours.

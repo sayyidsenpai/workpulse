@@ -10,14 +10,18 @@ writes <folder>/demo-data (a WorkPulse data folder with 75 days of sample sessio
         .build/debug/WorkPulse --snapshot <folder>/out
 
 Run both commands during the work hours of a work day (08.00 to 16.00, Monday to Friday),
-or give both the same TZ, for example TZ=America/Phoenix.
+or give both the same TZ, for example TZ=America/Phoenix. On a weekend everywhere, add --weekend:
+Saturday is then a work day too, so the pictures can be made with a TZ where it is morning.
 
 With --holiday, today is a holiday that WorkPulse did not know: work from 08.00 to 10.00, then
 Safari. Render it with WORKPULSE_DEMO_APP="com.apple.Safari:Safari" for the day-off pictures.
 """
 import sqlite3, os, sys, json, time, datetime, shutil
 holiday = '--holiday' in sys.argv
-args = [a for a in sys.argv[1:] if a != '--holiday']
+weekend = '--weekend' in sys.argv
+args = [a for a in sys.argv[1:] if a not in ('--holiday', '--weekend')]
+work_days = [2, 3, 4, 5, 6, 7] if weekend else [2, 3, 4, 5, 6]
+work_mask = sum(1 << (d - 1) for d in work_days)
 if len(args) != 1:
     sys.exit(__doc__)
 root = args[0]
@@ -81,9 +85,9 @@ days_off = [{"from": index(datetime.date(year, 12, 24)), "to": index(datetime.da
             {"from": index(datetime.date(year, 12, 25)), "to": index(datetime.date(year, 12, 25)), "name": "Christmas Day"},
             {"from": index(datetime.date(year, 12, 29)), "to": index(datetime.date(year, 12, 31)), "name": "Leave"},
             {"from": index(datetime.date(year + 1, 1, 1)), "to": index(datetime.date(year + 1, 1, 1)), "name": "New Year's Day"}]
-db.execute("INSERT INTO goals(effective_from, daily_hours, min_day_minutes, working_days) VALUES (?,?,?,?)", (epoch_day - 90, 6, 30, 62))
+db.execute("INSERT INTO goals(effective_from, daily_hours, min_day_minutes, working_days) VALUES (?,?,?,?)", (epoch_day - 90, 6, 30, work_mask))
 settings = {"onboarded": True, "profile": "work",
-            "schedule": {"enabled": True, "days": [2, 3, 4, 5, 6], "startMinutes": 480, "endMinutes": 960,
+            "schedule": {"enabled": True, "days": work_days, "startMinutes": 480, "endMinutes": 960,
                          "daysOff": days_off},
             "sleep": {"enabled": True, "bedtimeMinutes": 23 * 60, "leadMinutes": 30, "days": [1, 2, 3, 4, 5, 6, 7]},
             "lastBackupDay": epoch_day, "firstWeekday": 2}

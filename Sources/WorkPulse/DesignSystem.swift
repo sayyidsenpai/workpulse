@@ -474,34 +474,59 @@ struct RowOrColumn: Layout {
     var alignment: VerticalAlignment = .center
     var spacing: CGFloat = 8
 
-    /// The width of the row: the ideal widths and the spacing, measured once per change of the views.
-    func makeCache(subviews: Subviews) -> CGFloat {
-        subviews.reduce(spacing * CGFloat(max(0, subviews.count - 1))) { $0 + $1.sizeThatFits(.unspecified).width }
+    /// The ideal and the largest width of each view, measured once per change of the views.
+    struct Widths { var ideal: [CGFloat] = []; var grows: [Bool] = [] }
+
+    func makeCache(subviews: Subviews) -> Widths {
+        let ideal = subviews.map { $0.sizeThatFits(.unspecified).width }
+        let grows = zip(subviews, ideal).map { $0.sizeThatFits(ProposedViewSize(width: .infinity, height: nil)).width > $1 }
+        return Widths(ideal: ideal, grows: grows)
     }
 
-    func updateCache(_ cache: inout CGFloat, subviews: Subviews) { cache = makeCache(subviews: subviews) }
+    func updateCache(_ cache: inout Widths, subviews: Subviews) { cache = makeCache(subviews: subviews) }
 
-    private func stack(_ width: CGFloat?, _ row: CGFloat) -> AnyLayout {
-        row <= (width ?? .infinity)
-            ? AnyLayout(HStackLayout(alignment: alignment, spacing: spacing))
-            : AnyLayout(VStackLayout(alignment: .leading, spacing: spacing))
+    private func rowWidth(_ cache: Widths) -> CGFloat { cache.ideal.reduce(spacing * CGFloat(max(0, cache.ideal.count - 1)), +) }
+
+    /// In a row each view gets its ideal width, and the views that can grow share the rest equally.
+    /// An HStack shares the whole width by flexibility instead and squeezes a group of fixed controls.
+    private func rowWidths(_ width: CGFloat, _ cache: Widths) -> [CGFloat] {
+        let growing = cache.grows.filter { $0 }.count
+        let extra = growing == 0 ? 0 : max(0, width - rowWidth(cache)) / CGFloat(growing)
+        return zip(cache.ideal, cache.grows).map { $1 ? $0 + extra : $0 }
     }
 
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout CGFloat) -> CGSize {
-        let layout = stack(proposal.width, cache)
-        var inner = layout.makeCache(subviews: subviews)
-        return layout.sizeThatFits(proposal: proposal, subviews: subviews, cache: &inner)
+    private var column: AnyLayout { AnyLayout(VStackLayout(alignment: .leading, spacing: spacing)) }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout Widths) -> CGSize {
+        let row = rowWidth(cache)
+        guard row <= (proposal.width ?? .infinity) else {
+            var inner = column.makeCache(subviews: subviews)
+            return column.sizeThatFits(proposal: proposal, subviews: subviews, cache: &inner)
+        }
+        let width = proposal.width ?? row
+        let heights = zip(subviews, rowWidths(width, cache)).map { $0.sizeThatFits(ProposedViewSize(width: $1, height: proposal.height)).height }
+        return CGSize(width: width, height: heights.max() ?? 0)
     }
 
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout CGFloat) {
-        let layout = stack(bounds.width, cache)
-        var inner = layout.makeCache(subviews: subviews)
-        layout.placeSubviews(in: bounds, proposal: proposal, subviews: subviews, cache: &inner)
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout Widths) {
+        guard rowWidth(cache) <= bounds.width else {
+            var inner = column.makeCache(subviews: subviews)
+            column.placeSubviews(in: bounds, proposal: proposal, subviews: subviews, cache: &inner)
+            return
+        }
+        var x = bounds.minX
+        for (view, width) in zip(subviews, rowWidths(bounds.width, cache)) {
+            let size = ProposedViewSize(width: width, height: bounds.height)
+            let height = view.sizeThatFits(size).height
+            let y = alignment == .top ? bounds.minY : alignment == .bottom ? bounds.maxY - height : bounds.midY - height / 2
+            view.place(at: CGPoint(x: x, y: y), proposal: size)
+            x += width + spacing
+        }
     }
 
     // No alignment guides of its own: without these, SwiftUI merges the guides of every subview.
-    func explicitAlignment(of guide: HorizontalAlignment, in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout CGFloat) -> CGFloat? { nil }
-    func explicitAlignment(of guide: VerticalAlignment, in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout CGFloat) -> CGFloat? { nil }
+    func explicitAlignment(of guide: HorizontalAlignment, in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout Widths) -> CGFloat? { nil }
+    func explicitAlignment(of guide: VerticalAlignment, in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout Widths) -> CGFloat? { nil }
 }
 
 /// Two views side by side when the width allows, else one below the other. Unlike ViewThatFits,

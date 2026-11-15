@@ -11,6 +11,17 @@ final class OvertimeTests: XCTestCase {
         [GoalConfig(effectiveFrom: monday.adding(-60), dailyHours: daily, overtime: rule)]
     }
 
+    /// Overtime of `periods` the way Reports computes it: the Fixed days from one pass over the sessions.
+    private func overtime(_ periods: [PeriodResult], _ sessions: [Session], _ schedule: WorkSchedule, _ configs: [GoalConfig]) -> TimeInterval {
+        Aggregator.overtime(of: periods, fixedByDay: Aggregator.fixedOvertimeByDay(sessions, configs: configs, current: schedule))
+    }
+
+    /// The daily CSV cell: nil on a Flexible day or without work hours.
+    private func fixedOn(_ sessions: [Session], on day: LocalDay, configs: [GoalConfig], current: WorkSchedule) -> TimeInterval? {
+        Goals.fixedHours(on: day, configs: configs, current: current) == nil
+            ? nil : Aggregator.fixedOvertimeByDay(sessions, configs: configs, current: current)[day] ?? 0
+    }
+
     private func week(_ sessions: [Session], _ configs: [GoalConfig]) -> PeriodResult {
         Goals.evaluate(.week, containing: monday, totals: Aggregator.dayTotals(sessions), configs: configs,
                        today: monday.adding(6), firstWeekday: 2)
@@ -21,10 +32,10 @@ final class OvertimeTests: XCTestCase {
         let sessions = [makeSession(monday, 6, 20)]
         let flexible = week(sessions, goals(.flexible))
         XCTAssertEqual(flexible.overtimeRule, .flexible)
-        XCTAssertEqual(Aggregator.overtime(of: [flexible], sessions: sessions, schedule: schedule, configs: goals(.flexible)), 0)
+        XCTAssertEqual(overtime([flexible], sessions, schedule, goals(.flexible)), 0)
 
         let fixed = week(sessions, goals(.fixed))
-        XCTAssertEqual(Aggregator.overtime(of: [fixed], sessions: sessions, schedule: schedule, configs: goals(.fixed)), 6 * h, accuracy: 1e-6)
+        XCTAssertEqual(overtime([fixed], sessions, schedule, goals(.fixed)), 6 * h, accuracy: 1e-6)
     }
 
     func testFlexibleOvertimeIsWorkOverTheWeeklyGoal() {
@@ -32,7 +43,7 @@ final class OvertimeTests: XCTestCase {
         let sessions = [makeSession(monday, 6, 20), makeSession(monday.adding(3), 8, 16), makeSession(monday.adding(4), 7, 16.2)]
         let result = week(sessions, goals(.flexible))
         XCTAssertEqual(result.targetSeconds ?? 0, 30 * h, accuracy: 1e-6)
-        XCTAssertEqual(Aggregator.overtime(of: [result], sessions: sessions, schedule: schedule, configs: goals(.flexible)), 1.2 * h, accuracy: 1e-6)
+        XCTAssertEqual(overtime([result], sessions, schedule, goals(.flexible)), 1.2 * h, accuracy: 1e-6)
     }
 
     func testFlexibleYearBalancesAcrossMonths() {
@@ -41,8 +52,8 @@ final class OvertimeTests: XCTestCase {
                              workingDays: 20, overtimeRule: .flexible)
         let b = PeriodResult(period: .month, range: monday.adding(28)...monday.adding(58), workSeconds: 110 * h, targetSeconds: 120 * h,
                              workingDays: 20, overtimeRule: .flexible)
-        XCTAssertEqual(Aggregator.overtime(of: [a], sessions: [], schedule: schedule, configs: []), 10 * h)
-        XCTAssertEqual(Aggregator.overtime(of: [a, b], sessions: [], schedule: schedule, configs: []), 0)
+        XCTAssertEqual(overtime([a], [], schedule, []), 10 * h)
+        XCTAssertEqual(overtime([a, b], [], schedule, []), 0)
     }
 
     func testFlexibleWithoutGoalHasNoOvertime() {
@@ -51,7 +62,7 @@ final class OvertimeTests: XCTestCase {
         let result = week(sessions, configs)
         XCTAssertNil(result.targetSeconds)
         XCTAssertFalse(Aggregator.overtimeApplies(to: [result], schedule: schedule, configs: configs))
-        XCTAssertEqual(Aggregator.overtime(of: [result], sessions: sessions, schedule: schedule, configs: configs), 0)
+        XCTAssertEqual(overtime([result], sessions, schedule, configs), 0)
     }
 
     func testFixedHoursNeedWorkHours() {
@@ -59,7 +70,7 @@ final class OvertimeTests: XCTestCase {
         let result = week(sessions, goals(.fixed))
         XCTAssertTrue(Aggregator.overtimeApplies(to: [result], schedule: schedule, configs: goals(.fixed)))
         XCTAssertFalse(Aggregator.overtimeApplies(to: [result], schedule: WorkSchedule(), configs: goals(.fixed)))
-        XCTAssertEqual(Aggregator.overtime(of: [result], sessions: sessions, schedule: WorkSchedule(), configs: goals(.fixed)), 0)
+        XCTAssertEqual(overtime([result], sessions, WorkSchedule(), goals(.fixed)), 0)
     }
 
     func testEachPeriodUsesTheRuleThatAppliedThen() {
@@ -90,19 +101,19 @@ final class OvertimeTests: XCTestCase {
         today.startMinutes = 10 * 60
         today.endMinutes = 18 * 60
         let sessions = [makeSession(monday, 8, 17), makeSession(monday.adding(3), 8, 17)]
-        XCTAssertEqual(Goals.fixedOvertime(sessions, on: monday, configs: configs, current: today) ?? -1, 1 * h, accuracy: 1e-6)
-        XCTAssertEqual(Goals.fixedOvertime(sessions, on: monday.adding(3), configs: configs, current: today) ?? -1, 2 * h, accuracy: 1e-6)
+        XCTAssertEqual(fixedOn(sessions, on: monday, configs: configs, current: today) ?? -1, 1 * h, accuracy: 1e-6)
+        XCTAssertEqual(fixedOn(sessions, on: monday.adding(3), configs: configs, current: today) ?? -1, 2 * h, accuracy: 1e-6)
         let result = week(sessions, configs)
-        XCTAssertEqual(Aggregator.overtime(of: [result], sessions: sessions, schedule: today, configs: configs), 3 * h, accuracy: 1e-6)
+        XCTAssertEqual(overtime([result], sessions, today, configs), 3 * h, accuracy: 1e-6)
         // A version without stored hours (saved before 1.1) uses the current hours.
-        XCTAssertEqual(Goals.fixedOvertime(sessions, on: monday, configs: goals(.fixed), current: today) ?? -1, 2 * h, accuracy: 1e-6)
+        XCTAssertEqual(fixedOn(sessions, on: monday, configs: goals(.fixed), current: today) ?? -1, 2 * h, accuracy: 1e-6)
     }
 
     func testDailyOvertimeIsEmptyOnFlexibleDaysAndWithoutHours() {
         let sessions = [makeSession(monday, 6, 20)]
-        XCTAssertNil(Goals.fixedOvertime(sessions, on: monday, configs: goals(.flexible), current: schedule))
-        XCTAssertNil(Goals.fixedOvertime(sessions, on: monday, configs: goals(.fixed), current: WorkSchedule()))
-        XCTAssertEqual(Goals.fixedOvertime(sessions, on: monday, configs: goals(.fixed), current: schedule) ?? -1, 6 * h, accuracy: 1e-6)
+        XCTAssertNil(fixedOn(sessions, on: monday, configs: goals(.flexible), current: schedule))
+        XCTAssertNil(fixedOn(sessions, on: monday, configs: goals(.fixed), current: WorkSchedule()))
+        XCTAssertEqual(fixedOn(sessions, on: monday, configs: goals(.fixed), current: schedule) ?? -1, 6 * h, accuracy: 1e-6)
     }
 
     func testLiveWorkTurnsIntoFlexibleOvertimeWhenTheWeekPassesItsGoal() throws {
@@ -140,6 +151,92 @@ final class OvertimeTests: XCTestCase {
         XCTAssertFalse(Goals.inOvertime(week: week, profile: engine.settings.profile, outsideHours: engine.isOvertime))
     }
 
+    func testOlderVersionsKeepTheHoursOfTheUpgrade() throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let old = try Database(path: directory.appendingPathComponent("workpulse.sqlite").path)
+        var settings = AppSettings()
+        settings.schedule = WorkSchedule(enabled: true, days: [2, 3, 4, 5, 6], startMinutes: 9 * 60, endMinutes: 17 * 60)
+        let json = String(decoding: try JSONEncoder().encode(settings), as: UTF8.self).replacingOccurrences(of: "'", with: "''")
+        try old.exec("""
+        CREATE TABLE goals(id INTEGER PRIMARY KEY, project_id INTEGER, effective_from INTEGER NOT NULL,
+            daily_hours REAL, weekly_hours REAL, monthly_hours REAL, weekly_days INTEGER,
+            min_day_minutes INTEGER NOT NULL, working_days INTEGER NOT NULL);
+        INSERT INTO goals(effective_from, daily_hours, min_day_minutes, working_days) VALUES (\(monday.index - 60), 6, 30, 62);
+        CREATE TABLE settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);
+        INSERT INTO settings(key, value) VALUES ('app', '\(json)');
+        """)
+        old.close()
+
+        let store = try Store(directory: directory)
+        defer { store.close() }
+        let configs = try store.goalConfigs()
+        XCTAssertEqual(configs.map(\.startMinutes), [9 * 60])
+        // Later the hours change to 08.00 to 16.00: Monday 08.00 to 17.00 before the change still has 1h of overtime (8 to 9).
+        var now = settings.schedule
+        now.startMinutes = 8 * 60
+        now.endMinutes = 16 * 60
+        XCTAssertEqual(fixedOn([makeSession(monday, 8, 17)], on: monday, configs: configs, current: now) ?? -1, 1 * h, accuracy: 1e-6)
+    }
+
+    func testZeroGoalHasNoFlexibleOvertime() {
+        // A week of days off: the goal is 0, so 5h of work there is not overtime (the popover agrees).
+        let week = PeriodResult(period: .week, range: monday...monday.adding(6), workSeconds: 5 * h, targetSeconds: 0,
+                                workingDays: 1, overtimeRule: .flexible)
+        XCTAssertFalse(Aggregator.overtimeApplies(to: [week], schedule: schedule, configs: []))
+        XCTAssertEqual(Aggregator.overtime(of: [week], fixedByDay: [:]), 0)
+        XCTAssertFalse(Goals.inOvertime(week: week, profile: .work, outsideHours: false))
+    }
+
+    func testFixedWeekMatchesTheSumOfItsCSVDays() {
+        // Flexible until Tuesday, Fixed from Wednesday: the Fixed week adds only its Fixed days, the same cells as the CSV.
+        let configs = [GoalConfig(effectiveFrom: monday.adding(-60), dailyHours: 6, overtime: .flexible),
+                       GoalConfig(effectiveFrom: monday.adding(2), dailyHours: 6, overtime: .fixed)]
+        let sessions = (0..<5).map { makeSession(monday.adding($0), 7, 17) }
+        let result = week(sessions, configs)
+        XCTAssertEqual(result.overtimeRule, .fixed)
+        let cells = (0..<7).compactMap { fixedOn(sessions, on: monday.adding($0), configs: configs, current: schedule) }
+        XCTAssertNil(fixedOn(sessions, on: monday, configs: configs, current: schedule))
+        XCTAssertEqual(overtime([result], sessions, schedule, configs), cells.reduce(0, +), accuracy: 1e-6)
+        XCTAssertEqual(cells.reduce(0, +), 3 * 2 * h, accuracy: 1e-6)
+    }
+
+    func testGoalSoundPlaysOnlyWhenWorkReachesTheGoal() {
+        var cue = GoalCue()
+        XCTAssertFalse(cue.update(reached: true, flexible: false, target: 6 * h), "a goal reached before launch is silent")
+        cue = GoalCue()
+        XCTAssertFalse(cue.update(reached: false, flexible: false, target: 6 * h))
+        XCTAssertTrue(cue.update(reached: true, flexible: false, target: 6 * h), "work reached the goal")
+        XCTAssertFalse(cue.update(reached: true, flexible: false, target: 6 * h), "once")
+        // The goal moves to the work: a change of rule, a lower goal, a day off. No sound.
+        cue = GoalCue()
+        _ = cue.update(reached: false, flexible: false, target: 6 * h)
+        XCTAssertFalse(cue.update(reached: true, flexible: true, target: 30 * h))
+        cue = GoalCue()
+        _ = cue.update(reached: false, flexible: true, target: 30 * h)
+        XCTAssertFalse(cue.update(reached: true, flexible: true, target: 24 * h))
+        // After the change, work that reaches the new goal plays it again.
+        _ = cue.update(reached: false, flexible: true, target: 30 * h)
+        XCTAssertTrue(cue.update(reached: true, flexible: true, target: 30 * h))
+    }
+
+    func testResultOfAPeriodNeverSaysItFailed() {
+        let week = monday...monday.adding(6)
+        func result(_ work: Double, _ goal: Double?, days: Int? = nil, worked: Int = 5) -> PeriodResult {
+            PeriodResult(period: .week, range: week, workSeconds: work * h, targetSeconds: goal.map { $0 * h }, workingDays: worked, daysTarget: days)
+        }
+        let after = monday.adding(7)
+        XCTAssertEqual(result(30, 30).outcome(today: after), .reached)
+        XCTAssertEqual(result(23.1, 30).outcome(today: after), .share(0.77))
+        XCTAssertEqual(result(20, 30).outcome(today: monday.adding(6)), .open(left: 10 * h))
+        // Hours reached, days goal (older settings) not: the days, not "100% of goal".
+        XCTAssertEqual(result(30, 30, days: 5, worked: 4).outcome(today: after), .days(worked: 4, goal: 5))
+        XCTAssertEqual(result(30, 30, days: 5, worked: 4).outcome(today: monday.adding(3)), .open(left: nil))
+        XCTAssertEqual(result(10, nil, days: 5, worked: 2).outcome(today: after), .days(worked: 2, goal: 5))
+        XCTAssertEqual(result(10, nil).outcome(today: after), .noGoal)
+    }
+
     func testRuleIsStoredAndOlderRowsReadAsFixed() throws {
         let directory = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -163,8 +260,9 @@ final class OvertimeTests: XCTestCase {
         store = try Store(directory: directory)
         let configs = try store.goalConfigs()
         XCTAssertEqual(configs.map(\.overtime), [.fixed, .flexible])
-        XCTAssertEqual(configs.map(\.startMinutes), [nil, 540])
-        XCTAssertEqual(configs.map(\.endMinutes), [nil, 1020])
+        // The version from before 1.1 was given the hours in force at the upgrade: none here (0 to 0).
+        XCTAssertEqual(configs.map(\.startMinutes), [0, 540])
+        XCTAssertEqual(configs.map(\.endMinutes), [0, 1020])
         store.close()
     }
 }

@@ -111,18 +111,18 @@ public enum Aggregator {
     }
 
     /// Overtime of goal periods (weeks or months), each by the rule that applied to it:
-    /// Fixed hours, work outside the work hours on each day; Flexible, work over the goal.
+    /// Fixed hours, the Fixed overtime of its days (`fixedByDay`); Flexible, work over the goal.
     /// Flexible periods in one call balance each other, so a year is the work of the year over
     /// the goal of the year, not the sum of its months.
-    /// `schedule` is the current work schedule: its days off, and the hours of goal versions that did not store their own.
-    public static func overtime(of periods: [PeriodResult], sessions: [Session], schedule: WorkSchedule, configs: [GoalConfig]) -> TimeInterval {
+    public static func overtime(of periods: [PeriodResult], fixedByDay: [LocalDay: TimeInterval]) -> TimeInterval {
         var fixed: TimeInterval = 0, work: TimeInterval = 0, goal: TimeInterval = 0
         for p in periods {
             switch p.overtimeRule {
             case .fixed:
-                fixed += p.range.days.reduce(0) { $0 + overtime(sessions, on: $1, schedule: Goals.schedule(on: $1, configs: configs, current: schedule)) }
+                fixed += p.range.days.reduce(0) { $0 + (fixedByDay[$1] ?? 0) }
             case .flexible:
-                guard let target = p.targetSeconds else { continue }
+                // No goal, or a goal of zero (a week of days off): nothing to be over, as in the popover.
+                guard let target = p.targetSeconds, target > 0 else { continue }
                 work += p.workSeconds
                 goal += target
             }
@@ -134,8 +134,36 @@ public enum Aggregator {
     /// or Flexible without a goal.
     public static func overtimeApplies(to periods: [PeriodResult], schedule: WorkSchedule, configs: [GoalConfig]) -> Bool {
         periods.contains { p in
-            p.overtimeRule == .fixed ? Goals.schedule(on: p.range.upperBound, configs: configs, current: schedule).isUsable : p.targetSeconds != nil
+            p.overtimeRule == .fixed
+                ? p.range.days.contains { Goals.fixedHours(on: $0, configs: configs, current: schedule) != nil }
+                : (p.targetSeconds ?? 0) > 0
         }
+    }
+
+    /// Fixed hours overtime of each day whose own goal version counts by Fixed hours and has work
+    /// hours (days without work are not in the result). One pass over the sessions, so a report of
+    /// all time stays fast; Reports, the daily CSV and the period totals all read it.
+    public static func fixedOvertimeByDay(_ sessions: [Session], configs: [GoalConfig], current: WorkSchedule) -> [LocalDay: TimeInterval] {
+        var hours: [Int: WorkSchedule?] = [:]
+        func hoursOn(_ day: Int) -> WorkSchedule? {
+            if let known = hours[day] { return known }
+            let found = Goals.fixedHours(on: LocalDay(index: day), configs: configs, current: current)
+            hours[day] = found
+            return found
+        }
+        var out: [LocalDay: TimeInterval] = [:]
+        for s in sessions where s.kind == .work {
+            let offset = Double(s.tzOffset)
+            var a = s.start.timeIntervalSince1970 + offset
+            let b = s.end.timeIntervalSince1970 + offset
+            while a < b {
+                let day = Int((a / 86400).rounded(.down))
+                let next = min(b, Double(day + 1) * 86400)
+                if let h = hoursOn(day) { out[LocalDay(index: day), default: 0] += (next - a) - h.overlap(localFrom: a, to: next) }
+                a = next
+            }
+        }
+        return out
     }
 
     /// The moment the work in `range` reached `seconds`; nil if it did not.
@@ -197,6 +225,27 @@ public struct PeriodResult: Equatable, Sendable {
     public var remainingSeconds: TimeInterval? { targetSeconds.map { max(0, $0 - workSeconds) } }
     public var fraction: Double? { targetSeconds.map { $0 > 0 ? min(1, workSeconds / $0) : 1 } }
 
+    /// What the Result column says about the period. A finished period under its goal says how far
+    /// the work came, never that it failed.
+    public enum Outcome: Equatable, Sendable {
+        case reached
+        /// Not finished yet; the hours still to the goal (nil when only a days goal is left).
+        case open(left: TimeInterval?)
+        /// Finished under the hours goal: the share of the goal, below 1.
+        case share(Double)
+        /// Finished with the hours goal reached but a days goal (older settings) not reached.
+        case days(worked: Int, goal: Int)
+        case noGoal
+    }
+
+    public func outcome(today: LocalDay) -> Outcome {
+        guard let achieved else { return .noGoal }
+        if achieved { return .reached }
+        if range.upperBound >= today { return .open(left: remainingSeconds.flatMap { $0 > 0 ? $0 : nil }) }
+        if let share = fraction, share < 1 { return .share(share) }
+        return .days(worked: workingDays, goal: daysTarget ?? workingDays)
+    }
+
     /// nil when no target applied to the period; otherwise whether every configured target was met.
     public var achieved: Bool? {
         let checks = [targetSeconds.map { workSeconds >= $0 }, daysTarget.map { workingDays >= $0 }].compactMap { $0 }
@@ -227,12 +276,12 @@ public enum Goals {
         return hours
     }
 
-    /// The overtime of one day by the Fixed hours rule; nil when Flexible applied that day (it
+    /// The work hours that judge `day` by Fixed hours; nil when Flexible applied that day (it
     /// counts by week and month, not by day) or when there were no work hours to compare with.
-    public static func fixedOvertime(_ sessions: [Session], on day: LocalDay, configs: [GoalConfig], current: WorkSchedule) -> TimeInterval? {
+    public static func fixedHours(on day: LocalDay, configs: [GoalConfig], current: WorkSchedule) -> WorkSchedule? {
         guard config(on: day, projectID: nil, in: configs)?.overtime ?? .fixed == .fixed else { return nil }
         let hours = schedule(on: day, configs: configs, current: current)
-        return hours.isUsable ? Aggregator.overtime(sessions, on: day, schedule: hours) : nil
+        return hours.isUsable ? hours : nil
     }
 
     /// The goal version in force on `day` for a profile (nil = overall).

@@ -80,7 +80,8 @@ struct OvertimeChoice: View {
             }
             .padding(.horizontal, 14).padding(.vertical, 12)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .background(on ? WP.field : WP.card, in: shape)
+            // The chosen card is the lighter surface in both appearances (cardStrong over card).
+            .background(on ? WP.cardStrong : WP.card, in: shape)
             .overlay(shape.strokeBorder(on ? WP.cobalt : WP.sliderTrack, lineWidth: on ? 2 : 1))
             .shadow(color: on ? WP.cobalt.opacity(0.16) : .clear, radius: 8, y: 6)
             .contentShape(shape)

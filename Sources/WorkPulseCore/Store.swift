@@ -115,6 +115,14 @@ public final class Store {
         for (name, type) in [("overtime", "TEXT"), ("start_minutes", "INTEGER"), ("end_minutes", "INTEGER")] where !columns.contains(name) {
             try db.exec("ALTER TABLE goals ADD COLUMN \(name) \(type)")
         }
+        // Versions saved before 1.1 get the work hours in force now, once, so a later change of the
+        // hours does not rewrite their reports. Hours that were off are stored as 0 to 0: no work hours.
+        // Every version saved since stores its own hours, so this finds nothing after the first open.
+        if try db.run("SELECT 1 FROM goals WHERE start_minutes IS NULL LIMIT 1").first != nil {
+            let hours = try loadSettings().schedule
+            let (start, end) = hours.isUsable ? (hours.startMinutes, hours.endMinutes) : (0, 0)
+            try db.run("UPDATE goals SET start_minutes=?, end_minutes=? WHERE start_minutes IS NULL", [start, end])
+        }
     }
 
     // MARK: - Sessions

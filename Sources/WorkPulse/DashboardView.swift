@@ -139,7 +139,8 @@ extension AppModel {
             let week = model.summary.week?.workSeconds ?? 0, goal = model.summary.week?.targetSeconds ?? 0
             return Hero(title: model.statusText, symbol: "target", live: true,
                         label: "Overtime this week", big: { Fmt.clock(max(0, week + asOf.live(at: $0, working: working) - goal)) },
-                        meta: model.summary.weekGoalAt.map { "Goal at \(Fmt.time($0))" } ?? "",
+                        // The day too when the goal was reached on an earlier day of the week: "Goal at Fri 17.17".
+                        meta: model.summary.weekGoalAt.map { "Goal at \(Calendar.current.isDateInToday($0) ? Fmt.time($0) : Fmt.dayTime($0))" } ?? "",
                         note: "You reached your weekly goal. You can stop now.",
                         fill: WP.navy, text: .white, sub: WP.onNavy,
                         second: HeroAction(label: "End work", symbol: "stop.fill", fill: .white, text: WP.navy) { model.endWork() })

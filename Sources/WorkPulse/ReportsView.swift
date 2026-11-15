@@ -57,6 +57,8 @@ private struct ReportData {
     /// Overtime of each row of the goal table, by the first day of its period; nil when no rule applies.
     var weekOvertime: [LocalDay: TimeInterval?] = [:]
     var monthOvertime: [LocalDay: TimeInterval?] = [:]
+    /// Fixed hours overtime of each day (see `Aggregator.fixedOvertimeByDay`), for the rows and the daily CSV.
+    var fixedByDay: [LocalDay: TimeInterval] = [:]
     var pay: [PayRow] = []
 }
 
@@ -149,17 +151,14 @@ struct ReportsView: View {
                                 isDayOff: model.isDayOff(_:))
         d.months = Goals.history(.month, in: range, totals: d.totals, configs: model.goals, today: today, firstWeekday: firstWeekday,
                                  isDayOff: model.isDayOff(_:))
-        if Aggregator.overtimeApplies(to: d.months, schedule: schedule, configs: model.goals) {
-            d.overtime = Aggregator.overtime(of: d.months, sessions: sessions, schedule: schedule, configs: model.goals)
+        d.fixedByDay = Aggregator.fixedOvertimeByDay(sessions, configs: model.goals, current: schedule)
+        func overtime(_ periods: [PeriodResult]) -> TimeInterval? {
+            Aggregator.overtimeApplies(to: periods, schedule: schedule, configs: model.goals)
+                ? Aggregator.overtime(of: periods, fixedByDay: d.fixedByDay) : nil
         }
-        d.weekOvertime = Dictionary(uniqueKeysWithValues: d.weeks.map { week in
-            (week.range.lowerBound, Aggregator.overtimeApplies(to: [week], schedule: schedule, configs: model.goals)
-                ? Aggregator.overtime(of: [week], sessions: sessions, schedule: schedule, configs: model.goals) : nil)
-        })
-        d.monthOvertime = Dictionary(uniqueKeysWithValues: d.months.map { month in
-            (month.range.lowerBound, Aggregator.overtimeApplies(to: [month], schedule: schedule, configs: model.goals)
-                ? Aggregator.overtime(of: [month], sessions: sessions, schedule: schedule, configs: model.goals) : nil)
-        })
+        d.overtime = overtime(d.months)
+        d.weekOvertime = Dictionary(uniqueKeysWithValues: d.weeks.map { ($0.range.lowerBound, overtime([$0])) })
+        d.monthOvertime = Dictionary(uniqueKeysWithValues: d.months.map { ($0.range.lowerBound, overtime([$0])) })
         d.pay = d.months.compactMap { m in
             Pay.entry(on: min(m.range.upperBound, today), in: model.pay).map {
                 PayRow(month: m.range.lowerBound, amount: $0.monthlyAmount, currency: $0.currency, work: m.workSeconds)
@@ -195,11 +194,11 @@ struct ReportsView: View {
                 Label("Export Sessions…", systemImage: "arrow.down.to.line")
             }
             Button {
-                let goals = model.goals, schedule = model.settings.schedule, sessions = data.sessions
+                let goals = model.goals, schedule = model.settings.schedule, fixedByDay = data.fixedByDay
                 let csv = CSV.daily(data.totals, in: data.range,
                                     isWorkingDay: { day, work in Goals.isWorkingDay(work, on: day, configs: goals) },
                                     rule: { Goals.config(on: $0, projectID: nil, in: goals)?.overtime ?? .fixed },
-                                    overtime: { Goals.fixedOvertime(sessions, on: $0, configs: goals, current: schedule) })
+                                    overtime: { Goals.fixedHours(on: $0, configs: goals, current: schedule) == nil ? nil : fixedByDay[$0] ?? 0 })
                 model.export(csv, name: "workpulse-daily-summary.csv")
             } label: {
                 Label("Export Daily Summary…", systemImage: "arrow.down.to.line")
@@ -673,17 +672,17 @@ struct ReportsView: View {
     /// period under its goal says how far the work came ("77% of goal"), not that it failed:
     /// the number is a fact, and the same measure as the Monthly goal tile.
     private func result(_ row: PeriodResult) -> some View {
-        let finishedShare: Double? = row.achieved == false && row.range.upperBound < .today() ? row.fraction : nil
-        let (symbol, text, tint, ink): (String, String, Color, Color) = switch row.achieved {
-        case true?: ("checkmark.circle.fill", "Reached", WP.green, WP.greenInk)
-        case false? where finishedShare == nil:
-            ("clock", row.remainingSeconds.map { "\(Fmt.duration($0, seconds: false)) left" } ?? "In progress", WP.textBlue, WP.textBlue)
+        let outcome = row.outcome(today: .today())
+        let (symbol, text, tint, ink): (String, String, Color, Color) = switch outcome {
+        case .reached: ("checkmark.circle.fill", "Reached", WP.green, WP.greenInk)
+        case .open(let left): ("clock", left.map { "\(Fmt.duration($0, seconds: false)) left" } ?? "In progress", WP.textBlue, WP.textBlue)
         // Rounded down: a period that did not reach its goal never says 100%.
-        case false?: ("", "\(Int(((finishedShare ?? 0) * 100).rounded(.down)))% of goal", WP.secondary, WP.secondary)
-        case nil: ("minus.circle", "No goal", WP.caption, WP.caption)
+        case .share(let share): ("", "\(Int((share * 100).rounded(.down)))% of goal", WP.secondary, WP.secondary)
+        case .days(let worked, let goal): ("calendar", "\(worked) of \(goal) days", WP.secondary, WP.secondary)
+        case .noGoal: ("minus.circle", "No goal", WP.caption, WP.caption)
         }
         return HStack(spacing: 6) {
-            if let share = finishedShare {
+            if case .share(let share) = outcome {
                 ShareRing(fraction: share, color: tint).frame(width: 15, height: 15)
             } else {
                 Image(systemName: symbol).font(.system(size: 15, weight: .semibold)).foregroundStyle(tint)

@@ -76,8 +76,8 @@ final class AppModel {
     @ObservationIgnored private var monitor: ActivityMonitor?
     @ObservationIgnored private var mainWindow: NSWindow?
     @ObservationIgnored private var onboardingWindow: NSWindow?
-    /// nil until the first refresh, so a goal that was reached before launch makes no sound.
-    @ObservationIgnored private var goalWasReached: Bool?
+    /// Decides when the goal sound plays (see `GoalCue`).
+    @ObservationIgnored private var goalCue = GoalCue()
     /// The state last written to the log, so each change is logged once.
     @ObservationIgnored private var loggedHeadline: Headline?
     @ObservationIgnored private var lastRefresh = Date.distantPast
@@ -261,8 +261,9 @@ final class AppModel {
         // The goal that the popover leads with: the weekly goal in Flexible, the daily goal in Fixed hours.
         let reached = flexible ? summary.weekGoalAt != nil
             : summary.day?.targetSeconds.map { $0 > 0 && summary.today.work >= $0 } ?? false
-        if goalWasReached == false && reached { Sounds.play(.goal, mode: settings.sounds) }
-        goalWasReached = reached
+        if goalCue.update(reached: reached, flexible: flexible, target: flexible ? summary.week?.targetSeconds : summary.day?.targetSeconds) {
+            Sounds.play(.goal, mode: settings.sounds)
+        }
         if headline != loggedHeadline {
             applog.info("state \(String(describing: self.headline), privacy: .public), goal reached \(reached, privacy: .public)")
             loggedHeadline = headline
@@ -270,13 +271,16 @@ final class AppModel {
         revision += 1
     }
 
-    var goalReached: Bool { goalWasReached ?? false }
+    var goalReached: Bool { goalCue.isReached }
 
     /// This week counts overtime by the Flexible rule (the rule of the goal version in force).
     var flexible: Bool { summary.week?.overtimeRule == .flexible }
 
-    /// How overtime counts from today. Without a stored goal (before onboarding): Flexible, the default.
-    var overtimeRule: OvertimeRule { Goals.config(on: .today(), projectID: nil, in: goals)?.overtime ?? .flexible }
+    /// How overtime counts from today. Without a stored goal: Flexible before onboarding (the
+    /// default for new users), Fixed hours after it (the rule every report used before the choice).
+    var overtimeRule: OvertimeRule {
+        Goals.config(on: .today(), projectID: nil, in: goals)?.overtime ?? (settings.onboarded ? .fixed : .flexible)
+    }
 
     /// Light, dark, or the appearance of macOS, for every WorkPulse window and the popover.
     private func applyTheme() {

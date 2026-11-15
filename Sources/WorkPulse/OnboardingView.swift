@@ -388,7 +388,7 @@ struct OnboardingView: View {
             heading("You are ready", "You can change all settings later.").wpRise(0)
             VStack(spacing: 0) {
                 recap("clock", "Work day",
-                      "\(Self.daysText(schedule.days, firstWeekday: model.settings.firstWeekday)), \(Fmt.time(minutes: schedule.startMinutes)) to \(Fmt.time(minutes: schedule.endMinutes))\(schedule.endMinutes < schedule.startMinutes ? ", next day" : ""). \(rule == .flexible ? "Flexible" : "Fixed hours") overtime")
+                      "\(Self.daysText(schedule.days, firstWeekday: model.settings.firstWeekday).capitalizedFirst), \(Fmt.time(minutes: schedule.startMinutes)) to \(Fmt.time(minutes: schedule.endMinutes))\(schedule.endMinutes < schedule.startMinutes ? ", next day" : ""). \(rule == .flexible ? "Flexible" : "Fixed hours") overtime")
                 line
                 recap("square.grid.2x2", "Work applications",
                       work.isEmpty ? "None. You can add them later in Apps." : work.map(\.name).joined(separator: ", "))
@@ -458,4 +458,9 @@ private struct AppRow: Identifiable {
     let name: String
     let icon: NSImage?
     let running: Bool
+}
+
+private extension String {
+    /// "Each day" at the start of a sentence; the other words keep their case.
+    var capitalizedFirst: String { prefix(1).uppercased() + dropFirst() }
 }

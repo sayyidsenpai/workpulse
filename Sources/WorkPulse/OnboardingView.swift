@@ -11,6 +11,7 @@ struct OnboardingView: View {
     @State private var step = 0
     @State private var schedule = WorkSchedule(enabled: true, days: [2, 3, 4, 5, 6], startMinutes: 8 * 60, endMinutes: 16 * 60)
     @State private var goal = WorkDayEditor.defaultGoal
+    @State private var rule = OvertimeRule.flexible
     @State private var apps: [AppRow] = []
     /// Bundle identifiers of the applications that count as work.
     @State private var ticked: Set<String> = []
@@ -20,7 +21,7 @@ struct OnboardingView: View {
     private static let rowHeight: CGFloat = 58
 
     /// The size of the onboarding window. The view fills it: the window is the dialog card of the design.
-    /// The height is what step 2 needs when No schedule is On (the tallest state), plus 4 pt.
+    /// The height is what step 2 needs (the tallest step), plus 4 pt.
     static let size = NSSize(width: 640, height: 624)
 
     /// `step` selects the first step shown (0…3); snapshots use it.
@@ -126,9 +127,9 @@ struct OnboardingView: View {
                 .wpRise(0)
             VStack(spacing: 10) {
                 feature("stopwatch", WP.cobalt, WP.onCobalt, "It counts work automatically",
-                        "In work hours, time in your work applications counts as work.")
+                        "In the Work profile, time in your work applications counts as work.")
                 feature("clock", WP.navy, WP.onNavy, "It tells you when to stop",
-                        "You see when you reach your goal and when work hours end.")
+                        "You see when you reach your goal. A long day can make a short day later.")
                 feature("checkmark.shield", WP.green, WP.greenBg, "Your data stays on this Mac",
                         "No account. No network. No keys, screen content, tabs, or URLs.")
             }
@@ -188,18 +189,16 @@ struct OnboardingView: View {
     // MARK: - Step 2: work day
 
     private var workDay: some View {
-        let off = !schedule.enabled
-        return VStack(alignment: .leading, spacing: 18) {
-            heading("Set your work day",
-                    "WorkPulse has two profiles. In Work, it counts work time. In Personal, it counts no work time.")
+        VStack(alignment: .leading, spacing: 16) {
+            heading("Set your work day", "\(OvertimeChoice.label) You can change this later in Work.")
                 .wpRise(0)
+            OvertimeChoice(rule: $rule, large: true)
+                .wpRise(1)
             HStack(alignment: .center, spacing: 20) {
                 VStack(spacing: 6) {
                     WorkDial(start: $schedule.startMinutes, end: $schedule.endMinutes, onCommit: clampGoal)
-                    // No hint while the dial is off: nothing can be dragged, and the note below needs the room.
-                    if !off { Text("Drag the arc or a handle.").font(WP.font(12)).foregroundStyle(WP.caption) }
+                    Text("Drag the arc or a handle.").font(WP.font(12)).foregroundStyle(WP.caption)
                 }
-                .disabled(off).opacity(off ? 0.45 : 1)
                 VStack(alignment: .leading, spacing: 12) {
                     VStack(alignment: .leading, spacing: 6) {
                         FieldLabel("Work days")
@@ -207,29 +206,24 @@ struct OnboardingView: View {
                             .accessibilityElement(children: .contain)
                             .accessibilityLabel("Work days")
                     }
-                    .disabled(off).opacity(off ? 0.45 : 1)
-                    HStack(spacing: 12) {
-                        timeField("Start", $schedule.startMinutes, other: schedule.endMinutes)
-                        timeField("End", $schedule.endMinutes, other: schedule.startMinutes)
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack(spacing: 12) {
+                            timeField("Start", $schedule.startMinutes, other: schedule.endMinutes)
+                            timeField("End", $schedule.endMinutes, other: schedule.startMinutes)
+                        }
+                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                            Image(systemName: "clock").font(.system(size: 10, weight: .semibold)).foregroundStyle(WP.textBlue)
+                                .accessibilityHidden(true)
+                            Text(OvertimeChoice.hoursRule(rule)).font(WP.font(12)).foregroundStyle(WP.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                     }
-                    .disabled(off).opacity(off ? 0.45 : 1)
                     goalSlider
                 }
             }
             .wpCard(padding: 16, strong: true)
-            .wpRise(1)
-            Toggle(isOn: Binding(get: { !schedule.enabled }, set: { schedule.enabled = !$0; clampGoal() })) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("No schedule").font(WP.font(14, .semibold)).foregroundStyle(WP.ink)
-                    Text("You start and end work with a button.").font(WP.font(13)).foregroundStyle(WP.secondary)
-                }
-            }
-            .toggleStyle(WPSwitchStyle())
-            .padding(.horizontal, 4)
             .wpRise(2)
-            if off { Note(text: "WorkPulse stays in Personal until you select Start work.") }
         }
-        .animation(reduceMotion ? nil : .easeInOut(duration: 0.25), value: off)
     }
 
     /// The work-day buttons of this step: 44 pt high, with the check mark above the name.
@@ -291,15 +285,13 @@ struct OnboardingView: View {
             }
             WPSlider(value: Binding(get: { shownGoal }, set: { goal = $0 }), range: 30...goalMax, step: 30,
                      label: "Daily goal", valueText: Fmt.minutes(shownGoal))
-            if schedule.enabled {   // with No schedule there are no work hours to compare with
-                Text(shownGoal >= length ? "This leaves no time for breaks." : "This leaves \(Fmt.minutes(length - shownGoal)) for breaks.")
-                    .font(WP.font(12)).monospacedDigit().foregroundStyle(WP.secondary)
-            }
+            Text(OvertimeChoice.goalNote(goal: shownGoal, hours: length, days: schedule.days.count))
+                .font(WP.font(12)).monospacedDigit().foregroundStyle(WP.secondary).fixedSize(horizontal: false, vertical: true)
         }
     }
 
-    /// The goal is at most the length of the work hours (12 hours with No schedule), in steps of 30 minutes.
-    private var goalMax: Int { schedule.enabled ? max(30, schedule.lengthMinutes / 30 * 30) : 720 }
+    /// The goal is at most the length of the work hours, in steps of 30 minutes.
+    private var goalMax: Int { max(30, schedule.lengthMinutes / 30 * 30) }
     private var shownGoal: Int { min(max(30, goal), goalMax) }
     private func clampGoal() { goal = shownGoal }
 
@@ -372,6 +364,7 @@ struct OnboardingView: View {
         }
         // The goal can never be longer than the work hours.
         goal = min(model.dailyGoalMinutes ?? goal, max(30, schedule.lengthMinutes / 30 * 30))
+        rule = model.overtimeRule
         var rows: [String: AppRow] = [:]
         for app in NSWorkspace.shared.runningApplications where app.activationPolicy == .regular {
             guard let id = app.bundleIdentifier, id != Bundle.main.bundleIdentifier else { continue }
@@ -394,14 +387,15 @@ struct OnboardingView: View {
         return VStack(alignment: .leading, spacing: 18) {
             heading("You are ready", "You can change all settings later.").wpRise(0)
             VStack(spacing: 0) {
-                recap("clock", "Work hours", schedule.enabled
-                      ? "\(Self.daysText(schedule.days, firstWeekday: model.settings.firstWeekday)), \(Fmt.time(minutes: schedule.startMinutes)) to \(Fmt.time(minutes: schedule.endMinutes))\(schedule.endMinutes < schedule.startMinutes ? ", next day" : "")"
-                      : "No schedule. You start work with a button.")
+                recap("clock", "Work day",
+                      "\(Self.daysText(schedule.days, firstWeekday: model.settings.firstWeekday)), \(Fmt.time(minutes: schedule.startMinutes)) to \(Fmt.time(minutes: schedule.endMinutes))\(schedule.endMinutes < schedule.startMinutes ? ", next day" : ""). \(rule == .flexible ? "Flexible" : "Fixed hours") overtime")
                 line
                 recap("square.grid.2x2", "Work applications",
                       work.isEmpty ? "None. You can add them later in Apps." : work.map(\.name).joined(separator: ", "))
                 line
-                recap("target", "Daily goal", "\(Fmt.minutes(shownGoal)) of work for each work day")
+                recap("target", "Daily goal", rule == .flexible
+                      ? "\(Fmt.minutes(shownGoal)) for each work day. Weekly goal \(Fmt.minutes(shownGoal * schedule.days.count))."
+                      : "\(Fmt.minutes(shownGoal)) of work for each work day")
             }
             .wpCard(padding: 0, strong: true)
             .wpRise(1)
@@ -452,7 +446,7 @@ struct OnboardingView: View {
             rule.categoryID = Store.uncategorizedID
             model.setRule(rule)
         }
-        model.finishOnboarding(schedule: schedule, goalMinutes: shownGoal,
+        model.finishOnboarding(schedule: schedule, goalMinutes: shownGoal, overtime: rule,
                                workApps: apps.filter { ticked.contains($0.id) }.map { (bundleID: $0.id, name: $0.name) },
                                launchAtLogin: launchAtLogin)
     }

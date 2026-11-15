@@ -31,8 +31,10 @@ struct Summary {
     var day: PeriodResult?
     var week: PeriodResult?
     var month: PeriodResult?
-    /// Today's work time outside the work hours.
+    /// Today's work time outside the work hours (Fixed hours).
     var overtime: TimeInterval = 0
+    /// When this week's work reached the weekly goal (Flexible); nil before that.
+    var weekGoalAt: Date?
     /// Today's work time that an AI agent did.
     var agent: TimeInterval = 0
     /// Work recorded in the current work session (see `AppSettings.workSessionStart`).
@@ -76,6 +78,8 @@ final class AppModel {
     @ObservationIgnored private var onboardingWindow: NSWindow?
     /// nil until the first refresh, so a goal that was reached before launch makes no sound.
     @ObservationIgnored private var goalWasReached: Bool?
+    /// The state last written to the log, so each change is logged once.
+    @ObservationIgnored private var loggedHeadline: Headline?
     @ObservationIgnored private var lastRefresh = Date.distantPast
     @ObservationIgnored private var rescheduling: Task<Void, Never>?
 
@@ -230,6 +234,7 @@ final class AppModel {
                               let own = start < sessions.first?.start ?? .distantFuture ? ((try? store.sessions(from: start)) ?? sessions) : sessions
                               return Aggregator.work(own, since: start)
                           } ?? 0)
+        summary.weekGoalAt = summary.week?.targetSeconds.flatMap { $0 > 0 ? Aggregator.reached($0, in: week, sessions: sessions) : nil }
         let scheduled = Goals.config(on: today, projectID: nil, in: goals)?.workingDays ?? settings.schedule.days
         summary.weekDays = week.days.compactMap { day in
             let worked = Goals.isWorkingDay(totals[day]?.work ?? 0, on: day, configs: goals)
@@ -242,7 +247,8 @@ final class AppModel {
         isDayOff = engine.isDayOffToday
         dayOffUndo = settings.dayOffUndo.flatMap { $0.day == today.index ? $0 : nil }
         if isDayOff || status != .personal { confirmingDayOff = false }
-        isOvertime = engine.isOvertime
+        // Flexible: overtime is work over the weekly goal. Fixed hours: work outside the work hours.
+        isOvertime = Goals.inOvertime(week: summary.week, profile: settings.profile, outsideHours: engine.isOvertime)
         agentWorking = engine.agentWorking
         workHoursEnd = engine.workHoursEnd
         lastWorkHoursEnd = engine.lastWorkHoursEnd
@@ -252,13 +258,25 @@ final class AppModel {
             ? Suggestion(app: engine.evidenceApp ?? "a work application", minutes: evidence) : nil
         refreshAgents()
         applyTheme()
-        let reached = summary.day?.targetSeconds.map { $0 > 0 && summary.today.work >= $0 } ?? false
+        // The goal that the popover leads with: the weekly goal in Flexible, the daily goal in Fixed hours.
+        let reached = flexible ? summary.weekGoalAt != nil
+            : summary.day?.targetSeconds.map { $0 > 0 && summary.today.work >= $0 } ?? false
         if goalWasReached == false && reached { Sounds.play(.goal, mode: settings.sounds) }
         goalWasReached = reached
+        if headline != loggedHeadline {
+            applog.info("state \(String(describing: self.headline), privacy: .public), goal reached \(reached, privacy: .public)")
+            loggedHeadline = headline
+        }
         revision += 1
     }
 
     var goalReached: Bool { goalWasReached ?? false }
+
+    /// This week counts overtime by the Flexible rule (the rule of the goal version in force).
+    var flexible: Bool { summary.week?.overtimeRule == .flexible }
+
+    /// How overtime counts from today. Without a stored goal (before onboarding): Flexible, the default.
+    var overtimeRule: OvertimeRule { Goals.config(on: .today(), projectID: nil, in: goals)?.overtime ?? .flexible }
 
     /// Light, dark, or the appearance of macOS, for every WorkPulse window and the popover.
     private func applyTheme() {
@@ -302,7 +320,7 @@ final class AppModel {
     /// Menu bar icon: one shape per state, so the state never depends on colour.
     var statusSymbol: String {
         switch headline {
-        case .overtime: "clock"
+        case .overtime: flexible ? "target" : "clock"
         case .agent: "terminal"
         case .tracking: goalReached ? "checkmark.circle" : "stopwatch.fill"
         case .nonwork, .ignored, .waiting: "stopwatch"
@@ -314,7 +332,7 @@ final class AppModel {
 
     var statusText: String {
         switch headline {
-        case .overtime: "Overtime"
+        case .overtime: flexible ? "Over your weekly goal" : "Overtime"
         case .agent: "\(engine.agent ?? "Agent") working"
         case .tracking: "Tracking work"
         case .nonwork: "Active · non-work"
@@ -348,8 +366,9 @@ final class AppModel {
 
     // MARK: - Work and Personal
 
-    /// "Start overtime" outside work hours, "Start work" otherwise.
-    var startLabel: String { settings.schedule.isUsable && !engine.inWorkHours ? "Start overtime" : "Start work" }
+    /// "Start overtime" outside work hours with Fixed hours, "Start work" otherwise. In Flexible,
+    /// work outside work hours is not overtime.
+    var startLabel: String { !flexible && settings.schedule.isUsable && !engine.inWorkHours ? "Start overtime" : "Start work" }
 
     func startWork(includeEvidence: Bool = false) {
         engine.startWork(includeEvidence: includeEvidence)
@@ -450,11 +469,13 @@ final class AppModel {
         Goals.config(on: .today(), projectID: nil, in: goals)?.dailyHours.map { Int(($0 * 60).rounded()) }
     }
 
-    /// Saves the work hours and the daily goal. The goal applies from today; the weekly and
-    /// monthly goals follow from it and the work days.
-    func saveWork(schedule: WorkSchedule, goalMinutes: Int) {
-        let turnedOn = schedule.isUsable && !settings.schedule.isUsable
+    /// Saves the work hours, the daily goal and how overtime counts. The goal and the rule apply
+    /// from today; the weekly and monthly goals follow from the goal and the work days. Work hours
+    /// are always on: both rules use them.
+    func saveWork(schedule: WorkSchedule, goalMinutes: Int, overtime: OvertimeRule) {
         var schedule = schedule
+        schedule.enabled = true
+        let turnedOn = schedule.isUsable && !settings.schedule.isUsable
         schedule.daysOff = settings.schedule.daysOff   // days off are edited on their own
         if schedule != settings.schedule { updateSettings { $0.schedule = schedule } }
         var goal = Goals.config(on: .today(), projectID: nil, in: goals) ?? GoalConfig(effectiveFrom: .today())
@@ -465,6 +486,10 @@ final class AppModel {
         goal.weeklyDays = nil
         goal.minDayMinutes = 30
         goal.workingDays = schedule.days
+        goal.overtime = overtime
+        // The hours go with the goal version, so Fixed hours judges each earlier day by its own hours.
+        goal.startMinutes = schedule.startMinutes
+        goal.endMinutes = schedule.endMinutes
         if goal != before {
             goal.id = 0
             goal.effectiveFrom = .today()
@@ -622,13 +647,14 @@ final class AppModel {
     }
 
     /// Stores the answers from onboarding. Nothing is tracked differently until this point.
-    func finishOnboarding(schedule: WorkSchedule, goalMinutes: Int, workApps: [(bundleID: String, name: String)], launchAtLogin: Bool) {
+    func finishOnboarding(schedule: WorkSchedule, goalMinutes: Int, overtime: OvertimeRule,
+                          workApps: [(bundleID: String, name: String)], launchAtLogin: Bool) {
         for app in workApps {
             var rule = self.rule(for: app.bundleID) ?? AppRule(bundleID: app.bundleID, appName: app.name)
             rule.categoryID = Store.workID
             setRule(rule)
         }
-        saveWork(schedule: schedule, goalMinutes: goalMinutes)
+        saveWork(schedule: schedule, goalMinutes: goalMinutes, overtime: overtime)
         if launchAtLogin != self.launchAtLogin { setLaunchAtLogin(launchAtLogin) }
         updateSettings { $0.onboarded = true }
         onboardingWindow?.close()

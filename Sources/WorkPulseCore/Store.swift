@@ -109,6 +109,12 @@ public final class Store {
         INSERT OR IGNORE INTO categories(id, name, kind, builtin) VALUES
             (1, 'Work', 'work', 1), (2, 'Non-work', 'nonwork', 1), (3, 'Ignored', 'excluded', 1), (4, 'Uncategorized', 'nonwork', 1);
         """)
+        // Added in 1.1. Rows from earlier versions have NULL: Fixed hours with the current work hours,
+        // so their reports do not change.
+        let columns = Set(try db.run("PRAGMA table_info(goals)").compactMap { $0[1] as? String })
+        for (name, type) in [("overtime", "TEXT"), ("start_minutes", "INTEGER"), ("end_minutes", "INTEGER")] where !columns.contains(name) {
+            try db.exec("ALTER TABLE goals ADD COLUMN \(name) \(type)")
+        }
     }
 
     // MARK: - Sessions
@@ -303,12 +309,14 @@ public final class Store {
     // MARK: - Goals and compensation (versioned by effective date)
 
     public func goalConfigs() throws -> [GoalConfig] {
-        try db.run("SELECT id, project_id, effective_from, daily_hours, weekly_hours, monthly_hours, weekly_days, min_day_minutes, working_days FROM goals ORDER BY effective_from").map { r in
+        try db.run("SELECT id, project_id, effective_from, daily_hours, weekly_hours, monthly_hours, weekly_days, min_day_minutes, working_days, overtime, start_minutes, end_minutes FROM goals ORDER BY effective_from").map { r in
             let mask = int(r[8])
             return GoalConfig(id: int(r[0]), projectID: r[1] as? Int64, effectiveFrom: LocalDay(index: Int(int(r[2]))),
                               dailyHours: optNum(r[3]), weeklyHours: optNum(r[4]), monthlyHours: optNum(r[5]),
                               weeklyDays: (r[6] as? Int64).map(Int.init), minDayMinutes: Int(int(r[7])),
-                              workingDays: Set((1...7).filter { mask & (1 << ($0 - 1)) != 0 }))
+                              workingDays: Set((1...7).filter { mask & (1 << ($0 - 1)) != 0 }),
+                              overtime: (r[9] as? String).flatMap(OvertimeRule.init(rawValue:)) ?? .fixed,
+                              startMinutes: (r[10] as? Int64).map(Int.init), endMinutes: (r[11] as? Int64).map(Int.init))
         }
     }
 
@@ -317,8 +325,9 @@ public final class Store {
         let mask = g.workingDays.reduce(0) { $0 | (1 << ($1 - 1)) }
         try db.transaction {
             try db.run("DELETE FROM goals WHERE effective_from=? AND project_id IS ?", [g.effectiveFrom.index, g.projectID])
-            try db.run("INSERT INTO goals(project_id, effective_from, daily_hours, weekly_hours, monthly_hours, weekly_days, min_day_minutes, working_days) VALUES (?,?,?,?,?,?,?,?)",
-                       [g.projectID, g.effectiveFrom.index, g.dailyHours, g.weeklyHours, g.monthlyHours, g.weeklyDays, g.minDayMinutes, mask])
+            try db.run("INSERT INTO goals(project_id, effective_from, daily_hours, weekly_hours, monthly_hours, weekly_days, min_day_minutes, working_days, overtime, start_minutes, end_minutes) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                       [g.projectID, g.effectiveFrom.index, g.dailyHours, g.weeklyHours, g.monthlyHours, g.weeklyDays, g.minDayMinutes, mask,
+                        g.overtime.rawValue, g.startMinutes, g.endMinutes])
         }
     }
 

@@ -279,6 +279,14 @@ public struct AppRule: Identifiable, Equatable, Sendable {
     }
 }
 
+/// How overtime counts. Stored with each goal version, so earlier periods keep their own rule.
+public enum OvertimeRule: String, Codable, CaseIterable, Sendable {
+    /// Work over the goal of the period (a week, a month). Long days and short days balance.
+    case flexible
+    /// Work outside the work hours, on each day. The rule of every version saved before the choice existed.
+    case fixed
+}
+
 /// A versioned goal configuration. A new row is written whenever goals change, so past
 /// periods keep being judged by the configuration that applied to them.
 public struct GoalConfig: Identifiable, Equatable, Sendable {
@@ -293,13 +301,20 @@ public struct GoalConfig: Identifiable, Equatable, Sendable {
     public var minDayMinutes: Int
     /// Scheduled working days, 1 = Sunday … 7 = Saturday. The daily target applies on these.
     public var workingDays: Set<Int>
+    public var overtime: OvertimeRule
+    /// The work hours that applied with this version, minutes after midnight; nil in versions
+    /// saved before they were stored (those use the current work hours).
+    public var startMinutes: Int?
+    public var endMinutes: Int?
 
     public init(id: Int64 = 0, projectID: Int64? = nil, effectiveFrom: LocalDay, dailyHours: Double? = nil,
                 weeklyHours: Double? = nil, monthlyHours: Double? = nil, weeklyDays: Int? = nil,
-                minDayMinutes: Int = 30, workingDays: Set<Int> = [2, 3, 4, 5, 6]) {
+                minDayMinutes: Int = 30, workingDays: Set<Int> = [2, 3, 4, 5, 6], overtime: OvertimeRule = .fixed,
+                startMinutes: Int? = nil, endMinutes: Int? = nil) {
         self.id = id; self.projectID = projectID; self.effectiveFrom = effectiveFrom
         self.dailyHours = dailyHours; self.weeklyHours = weeklyHours; self.monthlyHours = monthlyHours
         self.weeklyDays = weeklyDays; self.minDayMinutes = minDayMinutes; self.workingDays = workingDays
+        self.overtime = overtime; self.startMinutes = startMinutes; self.endMinutes = endMinutes
     }
 }
 

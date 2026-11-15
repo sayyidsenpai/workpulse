@@ -43,7 +43,7 @@ private struct ReportData {
     var sessions: [Session] = []
     var totals: [LocalDay: DayTotals] = [:]
     var stats = RangeStats()
-    /// Work time outside the work hours; nil when work hours are off.
+    /// Overtime of the period by the rule of each month (see `Aggregator.overtime(of:)`); nil when no rule applies.
     var overtime: TimeInterval?
     /// Today is in the period and counts as a working day.
     var includesToday = false
@@ -54,6 +54,9 @@ private struct ReportData {
     var appIDs: [String: String] = [:]
     var weeks: [PeriodResult] = []
     var months: [PeriodResult] = []
+    /// Overtime of each row of the goal table, by the first day of its period; nil when no rule applies.
+    var weekOvertime: [LocalDay: TimeInterval?] = [:]
+    var monthOvertime: [LocalDay: TimeInterval?] = [:]
     var pay: [PayRow] = []
 }
 
@@ -137,13 +140,6 @@ struct ReportsView: View {
         d.totals = Aggregator.dayTotals(sessions)
         d.sessions = sessions.filter { s in Aggregator.split(s).contains { range.contains($0.day) } }
         d.stats = Aggregator.stats(d.totals, in: range, configs: model.goals)
-        if schedule.isUsable {
-            d.overtime = d.sessions.filter { $0.kind == .work }.reduce(0) { sum, s in
-                Aggregator.split(s).filter { range.contains($0.day) }.reduce(sum) {
-                    $0 + Aggregator.overtime([s], on: $1.day, schedule: schedule)
-                }
-            }
-        }
         d.includesToday = range.contains(today) && Goals.isWorkingDay(d.totals[today]?.work ?? 0, on: today, configs: model.goals)
         d.dailyGoal = Goals.config(on: range.upperBound, projectID: nil, in: model.goals)?.dailyHours
             .flatMap { $0 > 0 ? $0 * 3600 : nil }
@@ -153,6 +149,17 @@ struct ReportsView: View {
                                 isDayOff: model.isDayOff(_:))
         d.months = Goals.history(.month, in: range, totals: d.totals, configs: model.goals, today: today, firstWeekday: firstWeekday,
                                  isDayOff: model.isDayOff(_:))
+        if Aggregator.overtimeApplies(to: d.months, schedule: schedule, configs: model.goals) {
+            d.overtime = Aggregator.overtime(of: d.months, sessions: sessions, schedule: schedule, configs: model.goals)
+        }
+        d.weekOvertime = Dictionary(uniqueKeysWithValues: d.weeks.map { week in
+            (week.range.lowerBound, Aggregator.overtimeApplies(to: [week], schedule: schedule, configs: model.goals)
+                ? Aggregator.overtime(of: [week], sessions: sessions, schedule: schedule, configs: model.goals) : nil)
+        })
+        d.monthOvertime = Dictionary(uniqueKeysWithValues: d.months.map { month in
+            (month.range.lowerBound, Aggregator.overtimeApplies(to: [month], schedule: schedule, configs: model.goals)
+                ? Aggregator.overtime(of: [month], sessions: sessions, schedule: schedule, configs: model.goals) : nil)
+        })
         d.pay = d.months.compactMap { m in
             Pay.entry(on: min(m.range.upperBound, today), in: model.pay).map {
                 PayRow(month: m.range.lowerBound, amount: $0.monthlyAmount, currency: $0.currency, work: m.workSeconds)
@@ -188,7 +195,11 @@ struct ReportsView: View {
                 Label("Export Sessions…", systemImage: "arrow.down.to.line")
             }
             Button {
-                let csv = CSV.daily(data.totals, in: data.range) { day, work in Goals.isWorkingDay(work, on: day, configs: model.goals) }
+                let goals = model.goals, schedule = model.settings.schedule, sessions = data.sessions
+                let csv = CSV.daily(data.totals, in: data.range,
+                                    isWorkingDay: { day, work in Goals.isWorkingDay(work, on: day, configs: goals) },
+                                    rule: { Goals.config(on: $0, projectID: nil, in: goals)?.overtime ?? .fixed },
+                                    overtime: { Goals.fixedOvertime(sessions, on: $0, configs: goals, current: schedule) })
                 model.export(csv, name: "workpulse-daily-summary.csv")
             } label: {
                 Label("Export Daily Summary…", systemImage: "arrow.down.to.line")
@@ -245,8 +256,11 @@ struct ReportsView: View {
         .accessibilityLabel("Summary for \(periodName)")
     }
 
+    /// "overtime 3h 10m this month": the period name only while the period is the current one.
     private var overtimeText: String? {
-        data.overtime.map { $0 >= 1 ? "overtime \(Fmt.duration($0))" : "no overtime" }
+        let today = LocalDay.today().components
+        let current = year == today.year ? (month == 0 ? " this year" : month == today.month ? " this month" : "") : ""
+        return data.overtime.map { ($0 >= 60 ? "overtime \(Fmt.duration($0, seconds: false))" : "no overtime") + current }
     }
 
     /// Work against the monthly goals of the period. Each monthly goal follows from the daily goal and the work days.
@@ -550,8 +564,10 @@ struct ReportsView: View {
     /// The two cards are side by side only when their heights are almost the same:
     /// a short card beside a long card leaves an empty area.
     private var balanced: Bool {
-        // ponytail: heights are estimates from the row counts; measure the cards if the rows change.
-        let apps = 79 + 48 * max(1, appRows.count), goals = 133 + 37 * goalRows.count
+        // ponytail: heights are estimates from the row counts and the lines of the rule note
+        // (4 lines Flexible, 3 lines Fixed hours at 452 pt); measure the cards if the rows change.
+        let note = model.overtimeRule == .flexible ? 88 : 71
+        let apps = 79 + 48 * max(1, appRows.count), goals = 117 + note + 37 * goalRows.count
         return abs(apps - goals) <= 80
     }
 
@@ -607,12 +623,12 @@ struct ReportsView: View {
         return VStack(alignment: .leading, spacing: 12) {
             heading("Goal achievement", control: segments)
             ScrollView(.horizontal) {
-                Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 0) {
+                Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 0) {
                     GridRow {
                         columnTitle(goalPeriod == .week ? "Week" : "Month").frame(maxWidth: .infinity, alignment: .leading)
-                        columnTitle("Work").gridColumnAlignment(.trailing)
-                        columnTitle("Goal").gridColumnAlignment(.trailing)
-                        columnTitle("Days").gridColumnAlignment(.trailing)
+                        columnTitle("Work").frame(maxWidth: .infinity, alignment: .trailing).gridColumnAlignment(.trailing)
+                        columnTitle("Goal").frame(maxWidth: .infinity, alignment: .trailing).gridColumnAlignment(.trailing)
+                        columnTitle("Overtime").frame(maxWidth: .infinity, alignment: .trailing).gridColumnAlignment(.trailing)
                         columnTitle("Result")
                     }
                     ForEach(rows, id: \.range.lowerBound) { row in
@@ -622,20 +638,25 @@ struct ReportsView: View {
                             Text(Fmt.duration(row.workSeconds)).accessibilityLabel("Work \(Fmt.duration(row.workSeconds))")
                             Text(row.targetSeconds.map { Fmt.duration($0) } ?? "–")
                                 .accessibilityLabel(row.targetSeconds.map { "Goal \(Fmt.duration($0))" } ?? "No goal")
-                            Text(days(row)).accessibilityLabel("Working days \(days(row))")
+                            let overtime = (goalPeriod == .week ? data.weekOvertime : data.monthOvertime)[row.range.lowerBound] ?? nil
+                            Text(overtime.map { Fmt.duration($0, seconds: false) } ?? "–")
+                                .accessibilityLabel(overtime.map { "Overtime \(Fmt.duration($0, seconds: false))" } ?? "No overtime rule")
                             result(row).accessibilityElement(children: .combine)
                         }
                         .font(WP.font(13)).monospacedDigit().foregroundStyle(WP.ink)
                     }
                 }
-                // The table is as wide as the card. In a narrow card it scrolls sideways.
+                // The table is as wide as the card; the free width is shared by the columns, so a wide
+                // card has an even rhythm, not one gap after the first column. In a narrow card it scrolls sideways.
                 .containerRelativeFrame(.horizontal) { width, _ in max(width, 420) }
             }
             .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
             if count > rows.count {
                 note("The table shows the latest \(rows.count) of \(count) \(goalPeriod == .week ? "weeks" : "months").")
             }
-            note("Each period uses the goals that applied at that time.")
+            Note(text: model.overtimeRule == .flexible
+                 ? "Flexible: overtime is work over the goal of the period. Long days and short days in the same period balance. Each period uses the goals and the way of counting that applied at that time."
+                 : "Fixed hours: overtime is work outside your work hours. Each period uses the goals and the way of counting that applied at that time.")
         }
         // Wide enough for all five columns, so the Result column is never cut.
         .frame(minWidth: 420, idealWidth: 420, maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -648,21 +669,25 @@ struct ReportsView: View {
         return "\(Calendar.current.shortMonthSymbols[c.month - 1]) \(c.year)"
     }
 
-    /// Working days of the period and its number of work days: "4 of 5" (the same rule as the popover).
-    private func days(_ row: PeriodResult) -> String {
-        row.daysGoal.map { "\(row.workingDays) of \($0)" } ?? String(row.workingDays)
-    }
-
-    /// An icon and a word for each result, so the result never depends on colour.
+    /// An icon and a word for each result, so the result never depends on colour. A finished
+    /// period under its goal says how far the work came ("77% of goal"), not that it failed:
+    /// the number is a fact, and the same measure as the Monthly goal tile.
     private func result(_ row: PeriodResult) -> some View {
+        let finishedShare: Double? = row.achieved == false && row.range.upperBound < .today() ? row.fraction : nil
         let (symbol, text, tint, ink): (String, String, Color, Color) = switch row.achieved {
         case true?: ("checkmark.circle.fill", "Reached", WP.green, WP.greenInk)
-        case false? where row.range.upperBound >= .today(): ("clock", "In progress", WP.textBlue, WP.textBlue)
-        case false?: ("xmark.circle", "Missed", WP.secondary, WP.secondary)
+        case false? where finishedShare == nil:
+            ("clock", row.remainingSeconds.map { "\(Fmt.duration($0, seconds: false)) left" } ?? "In progress", WP.textBlue, WP.textBlue)
+        // Rounded down: a period that did not reach its goal never says 100%.
+        case false?: ("", "\(Int(((finishedShare ?? 0) * 100).rounded(.down)))% of goal", WP.secondary, WP.secondary)
         case nil: ("minus.circle", "No goal", WP.caption, WP.caption)
         }
         return HStack(spacing: 6) {
-            Image(systemName: symbol).font(.system(size: 15, weight: .semibold)).foregroundStyle(tint)
+            if let share = finishedShare {
+                ShareRing(fraction: share, color: tint).frame(width: 15, height: 15)
+            } else {
+                Image(systemName: symbol).font(.system(size: 15, weight: .semibold)).foregroundStyle(tint)
+            }
             Text(text).font(WP.font(13, .semibold)).foregroundStyle(ink).fixedSize()
         }
     }
@@ -693,9 +718,9 @@ struct ReportsView: View {
             Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 0) {
                 GridRow {
                     columnTitle("Month").frame(maxWidth: .infinity, alignment: .leading)
-                    columnTitle("Amount").gridColumnAlignment(.trailing)
-                    columnTitle("Work").gridColumnAlignment(.trailing)
-                    columnTitle("Per hour").gridColumnAlignment(.trailing)
+                    columnTitle("Amount").frame(maxWidth: .infinity, alignment: .trailing).gridColumnAlignment(.trailing)
+                    columnTitle("Work").frame(maxWidth: .infinity, alignment: .trailing).gridColumnAlignment(.trailing)
+                    columnTitle("Per hour").frame(maxWidth: .infinity, alignment: .trailing).gridColumnAlignment(.trailing)
                 }
                 ForEach(rows) { row in
                     rowLine
@@ -796,5 +821,23 @@ private struct Segments<Value: Hashable>: View {
             Text(title).font(WP.font(13, .semibold))
         }
         .foregroundStyle(WP.ink)
+    }
+}
+
+/// A small ring that fills as far as the work came toward its goal. Neutral grey: it shows
+/// progress, not a warning. The text beside it says the same number.
+private struct ShareRing: View {
+    let fraction: Double
+    let color: Color
+
+    var body: some View {
+        ZStack {
+            Circle().stroke(WP.track, lineWidth: 2.5)
+            Circle().trim(from: 0, to: min(1, max(0, fraction)))
+                .stroke(color, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
+                .rotationEffect(.degrees(-90))
+        }
+        .padding(1.25)
+        .accessibilityHidden(true)
     }
 }

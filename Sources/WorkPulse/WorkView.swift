@@ -6,66 +6,141 @@ struct WorkView: View {
     @Environment(AppModel.self) private var model
     @State private var schedule = WorkSchedule()
     @State private var goal = WorkDayEditor.defaultGoal
+    @State private var rule = OvertimeRule.flexible
 
     var body: some View {
         Screen(maxWidth: 808) {
-            ScreenHeader(title: "Work", subtitle: "Set when you work and how much work you want to do each day.")
+            ScreenHeader(title: "Work", subtitle: "Set how you work and how much work you want to do each day.")
             VStack(alignment: .leading, spacing: 14) {
                 SectionTitle("Work day")
-                WorkDayEditor(schedule: $schedule, goal: $goal, firstWeekday: model.settings.firstWeekday,
+                WorkDayEditor(schedule: $schedule, goal: $goal, rule: $rule, firstWeekday: model.settings.firstWeekday,
                               goalIsSet: model.dailyGoalMinutes != nil) {
-                    model.saveWork(schedule: schedule, goalMinutes: goal)
+                    model.saveWork(schedule: schedule, goalMinutes: goal, overtime: rule)
                 }
             }
             .wpCard(strong: true)
             DaysOffCard()
-            Text("Changes apply from today. Earlier days keep their goals. WorkPulse calculates your weekly and monthly goals from your daily goal and your work days.")
+            Text("Changes apply from today. Earlier days keep their goals and their way of counting, so earlier reports do not change. WorkPulse calculates your weekly and monthly goals from your daily goal and your work days.")
                 .font(WP.font(12)).foregroundStyle(WP.caption).fixedSize(horizontal: false, vertical: true)
         }
         .onAppear(perform: load)
         .onChange(of: model.settings.schedule) { load() }
         .onChange(of: model.dailyGoalMinutes) { load() }
+        .onChange(of: model.overtimeRule) { load() }
     }
 
     private func load() {
         schedule = model.settings.schedule
         goal = model.dailyGoalMinutes ?? WorkDayEditor.defaultGoal
+        rule = model.overtimeRule
     }
 }
 
-/// Work hours and the daily goal as one unit: the goal can never be longer than the work hours.
-/// Used on the Work screen and in onboarding. `commit` runs when an edit is complete.
+/// The two ways to count overtime, as two cards with a radio button. Used on the Work screen and in onboarding.
+struct OvertimeChoice: View {
+    @Binding var rule: OvertimeRule
+    /// Onboarding uses the larger text of its dialog.
+    var large = false
+    var onChange: () -> Void = {}
+
+    static let label = "How does overtime count?"
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            card(.flexible, "Flexible", "Long days and short days balance. Overtime is work over the goal of the week or month.")
+            card(.fixed, "Fixed hours", "Each day counts alone. Overtime is work outside your work hours.")
+        }
+        .fixedSize(horizontal: false, vertical: true)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(Self.label)
+    }
+
+    private func card(_ value: OvertimeRule, _ name: String, _ text: String) -> some View {
+        let on = rule == value
+        let shape = RoundedRectangle(cornerRadius: large ? 14 : 12, style: .continuous)
+        return Button {
+            guard !on else { return }
+            rule = value
+            onChange()
+        } label: {
+            HStack(alignment: .top, spacing: 10) {
+                ZStack {
+                    Circle().fill(on ? WP.cobalt : WP.field)
+                    Circle().strokeBorder(on ? WP.cobalt : WP.border)
+                    if on { Circle().fill(.white).frame(width: 7, height: 7) }
+                }
+                .frame(width: 18, height: 18)
+                .padding(.top, 1)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(name).font(WP.font(14, .semibold)).foregroundStyle(WP.ink)
+                    Text(text).font(WP.font(large ? 13 : 12)).lineSpacing(large ? 3 : 2).foregroundStyle(WP.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 14).padding(.vertical, 12)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .background(on ? WP.field : WP.card, in: shape)
+            .overlay(shape.strokeBorder(on ? WP.cobalt : WP.sliderTrack, lineWidth: on ? 2 : 1))
+            .shadow(color: on ? WP.cobalt.opacity(0.16) : .clear, radius: 8, y: 6)
+            .contentShape(shape)
+        }
+        .buttonStyle(.plain)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(name)
+        .accessibilityHint(text)
+        .accessibilityAddTraits(on ? [.isButton, .isSelected] : .isButton)
+        .animation(.easeInOut(duration: 0.15), value: on)
+    }
+
+    /// The rule beside the work hours, the same sentence on the Work screen and in onboarding.
+    static func hoursRule(_ rule: OvertimeRule) -> String {
+        rule == .flexible ? "Work outside these hours is not overtime." : "Work outside these hours is overtime."
+    }
+
+    /// "This leaves 2h 00m for breaks. Weekly goal 30h 00m."
+    static func goalNote(goal: Int, hours: Int, days: Int) -> String {
+        let breaks = goal >= hours ? "This leaves no time for breaks." : "This leaves \(Fmt.minutes(hours - goal)) for breaks."
+        return days > 0 ? "\(breaks) Weekly goal \(Fmt.minutes(goal * days))." : breaks
+    }
+}
+
+/// How overtime counts, the work hours and the daily goal as one unit: the goal can never be
+/// longer than the work hours. Both ways of counting use the same work hours. `commit` runs when an edit is complete.
 struct WorkDayEditor: View {
     static let defaultGoal = 360
 
     @Binding var schedule: WorkSchedule
     /// Daily goal in minutes.
     @Binding var goal: Int
+    @Binding var rule: OvertimeRule
     let firstWeekday: Int
     /// False while no daily goal is stored yet.
     var goalIsSet = true
-    /// The label of the switch ("Use work hours").
-    var switchLabel = "Use work hours"
     var commit: () -> Void = {}
 
-    private var off: Bool { !schedule.enabled }
     /// The goal is at most the length of the work hours, in steps of 30 minutes.
-    private var goalMax: Int { off ? 720 : max(30, schedule.lengthMinutes / 30 * 30) }
+    private var goalMax: Int { max(30, schedule.lengthMinutes / 30 * 30) }
     private var shownGoal: Int { min(max(30, goal), goalMax) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Toggle(switchLabel, isOn: Binding(get: { schedule.enabled }, set: { schedule.enabled = $0; clampAndCommit() }))
-                .toggleStyle(WPSwitchStyle())
+            VStack(alignment: .leading, spacing: 6) {
+                FieldLabel(OvertimeChoice.label)
+                OvertimeChoice(rule: $rule, onChange: clampAndCommit)
+            }
+            // Work hours that an earlier version turned off: saving turns them on, so say it before.
+            if !schedule.enabled {
+                Note(text: "Work hours are off now. When you change a value on this screen, these work hours start to apply.")
+            }
             VStack(alignment: .leading, spacing: 6) {
                 FieldLabel("Work days")
                 DayChips(days: Binding(get: { schedule.days }, set: { schedule.days = $0; commit() }), firstWeekday: firstWeekday)
                     .accessibilityElement(children: .contain)
                     .accessibilityLabel("Work days")
             }
-            .disabled(off).opacity(off ? 0.45 : 1)
             ViewThatFits(in: .horizontal) {
-                HStack(alignment: .center, spacing: 32) { dial; times.frame(minWidth: 220, maxWidth: 340) }
+                HStack(alignment: .center, spacing: 32) { dial; times.frame(minWidth: 220, maxWidth: 480) }
                 VStack(spacing: 16) { dial; times }
             }
             .frame(maxWidth: .infinity)
@@ -73,7 +148,6 @@ struct WorkDayEditor: View {
                 .padding(.top, 14)
                 .overlay(alignment: .top) { Rectangle().fill(WP.hairline).frame(height: 1) }
         }
-        .animation(.easeInOut(duration: 0.25), value: off)
     }
 
     private var dial: some View {
@@ -81,7 +155,6 @@ struct WorkDayEditor: View {
             WorkDial(start: $schedule.startMinutes, end: $schedule.endMinutes, onCommit: clampAndCommit)
             Text("Drag the arc or a handle.").font(WP.font(12)).foregroundStyle(WP.caption)
         }
-        .disabled(off).opacity(off ? 0.45 : 1)
     }
 
     private var times: some View {
@@ -90,10 +163,10 @@ struct WorkDayEditor: View {
                 timeField("Start", $schedule.startMinutes, other: schedule.endMinutes)
                 timeField("End", $schedule.endMinutes, other: schedule.startMinutes)
             }
-            .disabled(off).opacity(off ? 0.45 : 1)
             VStack(alignment: .leading, spacing: 4) {
-                rule("play.fill", "At Start, WorkPulse changes to the Work profile.")
-                rule("stop.fill", "At End, WorkPulse tells you that work hours ended.")
+                ruleLine("play.fill", "At the start, WorkPulse changes to the Work profile.")
+                ruleLine("stop.fill", "At the end, WorkPulse tells you that work hours ended.")
+                ruleLine("clock", OvertimeChoice.hoursRule(rule))
             }
         }
     }
@@ -119,7 +192,7 @@ struct WorkDayEditor: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private func rule(_ symbol: String, _ text: String) -> some View {
+    private func ruleLine(_ symbol: String, _ text: String) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Image(systemName: symbol).font(.system(size: 9)).foregroundStyle(WP.textBlue).frame(width: 11)
             Text(text).font(WP.font(12)).foregroundStyle(WP.secondary).fixedSize(horizontal: false, vertical: true)
@@ -142,8 +215,7 @@ struct WorkDayEditor: View {
 
     private func relation(_ length: Int) -> String {
         if !goalIsSet { return "No daily goal is set. Move the slider to set one." }
-        if off { return "The goal applies on your work days." }
-        return shownGoal >= length ? "This leaves no time for breaks." : "This leaves \(Fmt.minutes(length - shownGoal)) for breaks."
+        return OvertimeChoice.goalNote(goal: shownGoal, hours: length, days: schedule.days.count)
     }
 
     private func clampAndCommit() {

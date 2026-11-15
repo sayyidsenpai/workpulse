@@ -134,6 +134,15 @@ extension AppModel {
         let lightEnd = HeroAction(label: "End work", symbol: "stop.fill", fill: WP.track, text: WP.ink) { model.endWork() }
 
         switch model.headline {
+        case .overtime where model.flexible:
+            // Work over the weekly goal, the same number as "Overtime this week" in the work time card.
+            let week = model.summary.week?.workSeconds ?? 0, goal = model.summary.week?.targetSeconds ?? 0
+            return Hero(title: model.statusText, symbol: "target", live: true,
+                        label: "Overtime this week", big: { Fmt.clock(max(0, week + asOf.live(at: $0, working: working) - goal)) },
+                        meta: model.summary.weekGoalAt.map { "Goal at \(Fmt.time($0))" } ?? "",
+                        note: "You reached your weekly goal. You can stop now.",
+                        fill: WP.navy, text: .white, sub: WP.onNavy,
+                        second: HeroAction(label: "End work", symbol: "stop.fill", fill: .white, text: WP.navy) { model.endWork() })
         case .overtime:
             // All work outside work hours today, the same number as in the Today card.
             let overtime = model.summary.overtime
@@ -294,10 +303,107 @@ struct HeroCard: View {
 // MARK: - Work time
 
 /// Work time today, this week and this month against the goals, counting live while work is tracked.
+/// Fixed hours leads with today; Flexible leads with the week, where long and short days balance.
 struct WorkTimeCard: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
+        if model.flexible { flexibleBody } else { fixedBody }
+    }
+
+    private var flexibleBody: some View {
+        Live { now in
+            let live = model.summary.live(at: now, working: model.isWorking)
+            let week = (model.summary.week?.workSeconds ?? 0) + live
+            let goal = model.summary.week?.targetSeconds.positive
+            VStack(alignment: .leading, spacing: 12) {
+                todayLine(live)
+                weekBlock(week, goal)
+                monthLine(live)
+                VStack(alignment: .leading, spacing: 10) {
+                    workingDays(label: "Days worked this week", shortLabel: "Days worked", showGoal: false)
+                    if let goal, week - goal >= 60 {
+                        HStack {
+                            Text("Overtime this week").font(WP.font(13, .medium))
+                            Spacer()
+                            Text(Fmt.duration(week - goal, seconds: false)).font(WP.font(13, .semibold)).monospacedDigit()
+                        }
+                        .foregroundStyle(WP.ink)
+                        .accessibilityElement(children: .combine)
+                    }
+                }
+                .padding(.top, 12)
+                .overlay(alignment: .top) { Rectangle().fill(WP.hairline).frame(height: 1) }
+                .padding(.horizontal, 6)
+            }
+            .padding(.bottom, 6)
+            .wpCard(padding: 8)
+        }
+    }
+
+    /// Today without a bar: in Flexible the daily goal is a guide, the week decides.
+    private func todayLine(_ live: TimeInterval) -> some View {
+        let work = model.summary.today.work + live
+        let goal = model.summary.day?.targetSeconds.positive
+        return HStack(alignment: .firstTextBaseline, spacing: 4) {
+            Text("Today").font(WP.font(13, .semibold))
+            Spacer()
+            Text(Fmt.duration(work, seconds: false)).font(WP.font(20, .bold)).monospacedDigit()
+            Text(goal.map { "Daily goal \(Fmt.duration($0, seconds: false))" } ?? (model.isDayOff ? "Day off" : "No goal today"))
+                .font(WP.font(12)).monospacedDigit().foregroundStyle(WP.secondary)
+        }
+        .foregroundStyle(WP.ink)
+        .padding(.horizontal, 6).padding(.top, 8)
+        .accessibilityElement(children: .combine)
+    }
+
+    /// This month on one line, as the week above it: the label left, the work and the goal right.
+    private func monthLine(_ live: TimeInterval) -> some View {
+        let work = (model.summary.month?.workSeconds ?? 0) + live
+        let goal = model.summary.month?.targetSeconds.positive
+        return VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                Text("This month").font(WP.font(13, .medium))
+                Spacer()
+                Text(Fmt.duration(work, seconds: false)).font(WP.font(13, .semibold)).monospacedDigit()
+                if let goal { Text("of \(Fmt.duration(goal, seconds: false))").font(WP.font(12)).monospacedDigit().foregroundStyle(WP.caption) }
+            }
+            .foregroundStyle(WP.ink).lineLimit(1)
+            WPBar(fraction: goal.map { work / $0 } ?? 0, height: 6, label: "This month")
+        }
+        .padding(.horizontal, 6)
+    }
+
+    private func weekBlock(_ work: TimeInterval, _ goal: TimeInterval?) -> some View {
+        let reached = goal.map { work >= $0 } ?? false
+        // Whole minutes on both sides, so the week and "left this week" always add up to the goal.
+        let shown = work >= 60 ? (work / 60).rounded(.down) * 60 : work.rounded(.down)
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                Text("This week").font(WP.font(13, .semibold))
+                Spacer()
+                Text(Fmt.duration(work, seconds: false)).font(WP.font(20, .bold)).monospacedDigit()
+                if let goal {
+                    Text("of \(Fmt.duration(goal, seconds: false))").font(WP.font(12)).monospacedDigit().foregroundStyle(WP.secondary)
+                }
+            }
+            WPBar(fraction: goal.map { work / $0 } ?? 0, color: reached ? WP.green : WP.cobalt, label: "This week")
+            HStack(spacing: 6) {
+                if reached {
+                    Image(systemName: "checkmark.circle.fill").foregroundStyle(WP.green).transition(.scale.combined(with: .opacity))
+                }
+                Text(goal.map { reached ? "Weekly goal reached" : "\(Fmt.duration($0 - shown, seconds: false)) left this week" } ?? "No weekly goal")
+                    .font(WP.font(12, reached ? .semibold : .regular)).monospacedDigit()
+                    .foregroundStyle(reached ? WP.greenInk : WP.secondary)
+            }
+        }
+        .foregroundStyle(WP.ink)
+        .padding(.horizontal, 6).padding(.vertical, 8)
+        .background(reached ? WP.greenBg : .clear, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .animation(.easeInOut(duration: 0.6), value: reached)
+    }
+
+    private var fixedBody: some View {
         Live { now in
             let live = model.summary.live(at: now, working: model.isWorking)
             VStack(alignment: .leading, spacing: 14) {
@@ -307,7 +413,7 @@ struct WorkTimeCard: View {
                     period("This month", model.summary.month, live)
                 }
                 .padding(.horizontal, 6)
-                workingDays
+                workingDays(label: "Working days this week", shortLabel: "Working days", showGoal: true)
                     .padding(.top, 12)
                     .overlay(alignment: .top) { Rectangle().fill(WP.hairline).frame(height: 1) }
                     .padding(.horizontal, 6)
@@ -365,12 +471,15 @@ struct WorkTimeCard: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private var workingDays: some View {
+    /// The days of this week with work. `showGoal` adds "of 5" (Fixed hours); in Flexible the
+    /// number of days is not a goal.
+    private func workingDays(label: String, shortLabel: String, showGoal: Bool) -> some View {
         let days = model.summary.weekDays
+        let goal = showGoal ? model.summary.week?.daysGoal.map { " of \($0)" } ?? "" : ""
         return HStack(spacing: 8) {
             ViewThatFits(in: .horizontal) {
-                Text("Working days this week")
-                Text("Working days")
+                Text(label)
+                Text(shortLabel)
             }
             .font(WP.font(13, .medium)).foregroundStyle(WP.ink).lineLimit(1)
             Spacer(minLength: 4)
@@ -396,15 +505,19 @@ struct WorkTimeCard: View {
             .accessibilityHidden(true)
             // Every day with work counts, the same as Reports and the weekly days goal.
             let extra = days.filter(\.extra).count
-            let goal = model.summary.week?.daysGoal.map { " of \($0)" } ?? ""
             Text("\(days.filter(\.worked).count)\(goal)")
                 .font(WP.font(13, .semibold)).monospacedDigit().foregroundStyle(WP.ink)
                 .help(extra > 0 ? "Includes work on \(extra) day\(extra == 1 ? "" : "s") outside your work days." : "")
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Working days this week: \(days.filter(\.worked).count)\(model.summary.week?.daysGoal.map { " of \($0)" } ?? "")"
+        .accessibilityLabel("\(label): \(days.filter(\.worked).count)\(goal)"
             + (days.contains(where: \.extra) ? ", including \(days.filter(\.extra).count) outside your work days" : ""))
     }
+}
+
+private extension Optional where Wrapped == TimeInterval {
+    /// A goal that is set and more than zero.
+    var positive: TimeInterval? { flatMap { $0 > 0 ? $0 : nil } }
 }
 
 /// Today by type: applications, agent, idle. Agent and idle have stripes as well as a colour.
@@ -521,7 +634,7 @@ struct DayOffConfirm: View {
                 }
                 effect("WorkPulse does not start work again today.")
             }
-            Text("Move this \(Fmt.duration(total)) to Personal? Work that you keep counts as overtime.")
+            Text("Move this \(Fmt.duration(total)) to Personal? Work that you keep counts \(model.flexible ? "toward your weekly goal" : "as overtime").")
                 .font(WP.font(13, .semibold)).foregroundStyle(WP.ink).fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 8) {
                 Button("Keep as work") { model.takeDayOff(moveWork: false) }

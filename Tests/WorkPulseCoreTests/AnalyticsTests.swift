@@ -272,11 +272,13 @@ final class AnalyticsTests: XCTestCase {
         XCTAssertEqual(lines[1], "3,2024-03-04T09:00:00+01:00,2024-03-04T10:30:00+01:00,5400,work,Xcode,,Work,Apollo,automatic,no,,\"review, part 1\"")
 
         let totals = Aggregator.dayTotals([s])
-        let daily = CSV.daily(totals, in: monday...monday.adding(1)) { _, work in work >= 3600 }
+        // Monday counts by Fixed hours (1h 30m outside the work hours), Tuesday by Flexible (no daily overtime).
+        let daily = CSV.daily(totals, in: monday...monday.adding(1), isWorkingDay: { _, work in work >= 3600 },
+                              rule: { $0 == monday ? .fixed : .flexible }, overtime: { $0 == monday ? 5400 : nil })
         XCTAssertEqual(daily.split(separator: "\n").map(String.init), [
-            "date,work_hours,nonwork_hours,active_hours,idle_hours,excluded_hours,working_day",
-            "2024-03-04,1.50,0.00,1.50,0.00,0.00,yes",
-            "2024-03-05,0.00,0.00,0.00,0.00,0.00,no",
+            "date,work_hours,nonwork_hours,active_hours,idle_hours,excluded_hours,working_day,overtime_rule,overtime_hours",
+            "2024-03-04,1.50,0.00,1.50,0.00,0.00,yes,fixed,1.50",
+            "2024-03-05,0.00,0.00,0.00,0.00,0.00,no,flexible,",
         ])
     }
 

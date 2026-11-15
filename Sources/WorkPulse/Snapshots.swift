@@ -90,14 +90,19 @@ extension AppModel {
             agentWorking = agent
             suggestion = ask ? Suggestion(app: "Xcode", minutes: 12) : nil
             // The overtime card as it looks after work hours: 42 minutes after a 16.00 end.
-            let saved = (workHoursEnd, lastWorkHoursEnd, summary.overtime)
+            let saved = (workHoursEnd, lastWorkHoursEnd, summary.overtime, summary.week, summary.weekGoalAt)
             if overtime {
                 workHoursEnd = nil
                 lastWorkHoursEnd = Calendar.current.date(bySettingHour: 16, minute: 0, second: 0, of: Date())
                 summary.overtime = 42 * 60
+                // Flexible: 1h 12m over the weekly goal, reached at 17.17.
+                if flexible, let target = summary.week?.targetSeconds {
+                    summary.week?.workSeconds = target + 72 * 60
+                    summary.weekGoalAt = Calendar.current.date(bySettingHour: 17, minute: 17, second: 0, of: Date())
+                }
             }
             heroes.append(hero)
-            (workHoursEnd, lastWorkHoursEnd, summary.overtime) = saved
+            (workHoursEnd, lastWorkHoursEnd, summary.overtime, summary.week, summary.weekGoalAt) = saved
         }
         summary.sessionWork = 2712
         idleSince = Date().addingTimeInterval(-900)

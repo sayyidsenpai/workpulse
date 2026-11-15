@@ -404,15 +404,27 @@ struct WPDateField: NSViewRepresentable {
         return picker
     }
 
+    /// Each property is set only when it changes: every set makes the native control lay out and
+    /// draw again, and SwiftUI calls this on every update of the screen around it.
     func updateNSView(_ picker: NSDatePicker, context: Context) {
         context.coordinator.parent = self
-        picker.datePickerElements = elements
-        picker.maxDate = maxDate
-        picker.minDate = minDate
-        picker.font = .monospacedDigitSystemFont(ofSize: size, weight: weight)
-        picker.textColor = .labelColor
-        picker.isEnabled = context.environment.isEnabled
+        if picker.datePickerElements != elements { picker.datePickerElements = elements }
+        // Callers pass `Date()` as the limit, a new value on every update: a minute of tolerance.
+        if Self.changed(picker.maxDate, maxDate) || picker.maxDate.map({ selection > $0 }) == true { picker.maxDate = maxDate }
+        if Self.changed(picker.minDate, minDate) || picker.minDate.map({ selection < $0 }) == true { picker.minDate = minDate }
+        let font = NSFont.monospacedDigitSystemFont(ofSize: size, weight: weight)
+        if picker.font != font { picker.font = font }
+        if picker.textColor != .labelColor { picker.textColor = .labelColor }
+        if picker.isEnabled != context.environment.isEnabled { picker.isEnabled = context.environment.isEnabled }
         if picker.dateValue != selection { picker.dateValue = selection }
+    }
+
+    private static func changed(_ old: Date?, _ new: Date?) -> Bool {
+        switch (old, new) {
+        case (nil, nil): false
+        case let (old?, new?): abs(old.timeIntervalSince(new)) >= 60
+        default: true
+        }
     }
 
     final class Coordinator: NSObject {
@@ -452,6 +464,44 @@ struct CalendarButton: View {
             .padding(12)
         }
     }
+}
+
+/// The views in one row when their ideal widths fit, else one below the other (left-aligned).
+/// The choice of ViewThatFits between an HStack and a VStack of the same views, but each view
+/// exists once: ViewThatFits makes every candidate, so a native control (a date field) was made
+/// and updated twice.
+struct RowOrColumn: Layout {
+    var alignment: VerticalAlignment = .center
+    var spacing: CGFloat = 8
+
+    /// The width of the row: the ideal widths and the spacing, measured once per change of the views.
+    func makeCache(subviews: Subviews) -> CGFloat {
+        subviews.reduce(spacing * CGFloat(max(0, subviews.count - 1))) { $0 + $1.sizeThatFits(.unspecified).width }
+    }
+
+    func updateCache(_ cache: inout CGFloat, subviews: Subviews) { cache = makeCache(subviews: subviews) }
+
+    private func stack(_ width: CGFloat?, _ row: CGFloat) -> AnyLayout {
+        row <= (width ?? .infinity)
+            ? AnyLayout(HStackLayout(alignment: alignment, spacing: spacing))
+            : AnyLayout(VStackLayout(alignment: .leading, spacing: spacing))
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout CGFloat) -> CGSize {
+        let layout = stack(proposal.width, cache)
+        var inner = layout.makeCache(subviews: subviews)
+        return layout.sizeThatFits(proposal: proposal, subviews: subviews, cache: &inner)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout CGFloat) {
+        let layout = stack(bounds.width, cache)
+        var inner = layout.makeCache(subviews: subviews)
+        layout.placeSubviews(in: bounds, proposal: proposal, subviews: subviews, cache: &inner)
+    }
+
+    // No alignment guides of its own: without these, SwiftUI merges the guides of every subview.
+    func explicitAlignment(of guide: HorizontalAlignment, in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout CGFloat) -> CGFloat? { nil }
+    func explicitAlignment(of guide: VerticalAlignment, in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout CGFloat) -> CGFloat? { nil }
 }
 
 /// Two views side by side when the width allows, else one below the other. Unlike ViewThatFits,

@@ -356,12 +356,9 @@ struct DaysOffCard: View {
                 Text("On a day off, WorkPulse does not start work and does not notify you. The goals of that week and month drop by one day.")
                     .font(WP.font(12)).foregroundStyle(WP.caption).fixedSize(horizontal: false, vertical: true)
             }
-            ViewThatFits(in: .horizontal) {
-                HStack(alignment: .bottom, spacing: 12) { dateField("From", fromBinding, min: Date()); dateField("To", $to, min: from); nameField; addButton(overlaps) }
-                VStack(alignment: .leading, spacing: 12) {
-                    HStack(alignment: .bottom, spacing: 12) { dateField("From", fromBinding, min: Date()); dateField("To", $to, min: from) }
-                    HStack(alignment: .bottom, spacing: 12) { nameField; addButton(overlaps) }
-                }
+            RowOrColumn(alignment: .bottom, spacing: 12) {
+                HStack(alignment: .bottom, spacing: 12) { dateField("From", fromBinding, min: Date()); dateField("To", $to, min: from) }
+                HStack(alignment: .bottom, spacing: 12) { nameField; addButton(overlaps) }
             }
             if overlaps {
                 Note(tone: .warn, text: "These dates overlap a day off in the list. Remove that day off first, or select other dates.")

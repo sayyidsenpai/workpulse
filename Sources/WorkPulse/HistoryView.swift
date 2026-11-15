@@ -129,12 +129,9 @@ struct HistoryView: View {
     // MARK: Filters
 
     private var filters: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(alignment: .bottom, spacing: 12) { pickers; searchField }
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(alignment: .bottom, spacing: 12) { pickers }
-                searchField
-            }
+        RowOrColumn(alignment: .bottom, spacing: 12) {
+            HStack(alignment: .bottom, spacing: 12) { pickers }
+            searchField
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Filters")
@@ -383,6 +380,10 @@ private struct HistoryColumns: Layout {
             x += width
         }
     }
+
+    // No alignment guides of its own: without these, SwiftUI merges the guides of all five cells in every row.
+    func explicitAlignment(of guide: HorizontalAlignment, in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGFloat? { nil }
+    func explicitAlignment(of guide: VerticalAlignment, in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGFloat? { nil }
 }
 
 private extension View {
@@ -502,10 +503,7 @@ struct SessionEditor: View {
             .background(WP.hover.opacity(0.6), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
 
             VStack(alignment: .leading, spacing: 6) {
-                ViewThatFits(in: .horizontal) {
-                    HStack(alignment: .top, spacing: 10) { times }
-                    VStack(alignment: .leading, spacing: 10) { times }
-                }
+                RowOrColumn(alignment: .top, spacing: 10) { times }
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     if invalid { Image(systemName: "exclamationmark.triangle.fill").accessibilityLabel("Error") }
                     Text("End must be after Start. End cannot be later than now.").fixedSize(horizontal: false, vertical: true)

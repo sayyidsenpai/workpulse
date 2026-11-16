@@ -30,17 +30,16 @@ sleep records nothing.
 work hours starting). Idle and non-work applications stop it; it continues when you work again.
 End work ends the session.
 
-Work hours (Work screen) are optional: work days, Start and End. They act only at the two
-boundaries, and a choice you make by hand holds between them.
+Work hours (Work screen) are work days, Start and End. They act only at the two boundaries, and a choice you make by hand holds between them.
 
 - At Start, WorkPulse changes to the Work profile and shows one quiet notification: "Work hours
   started at 08.00". It asks nothing and has no sound. Point at it to see a "Day off" button.
   Settings › Tracking › "Tell me when work hours start" turns it off.
 - At End, if you still work (or an agent still works for you), WorkPulse continues, plays one
-  chime and shows one notification with an "End work" button. This time is **overtime**. If you
-  are away at End, WorkPulse changes to Personal without a word.
+  chime and shows one notification with an "End work" button. With Fixed hours, this time is
+  **overtime**. If you are away at End, WorkPulse changes to Personal without a word.
 - Overtime ends by itself after 15 minutes without input (Settings), on screen lock and on sleep.
-  Outside work hours you start overtime by hand.
+  With Fixed hours, outside work hours you start overtime by hand.
 - In Personal, WorkPulse asks "Is this work?" only with evidence: 12 minutes in work
   applications. "Start work" moves those minutes to work; "Not work" stops the question for the
   day. Nothing is ever counted without a recorded interval behind it.
@@ -75,6 +74,14 @@ Rule and goal changes apply from now on. They never rewrite recorded sessions.
   hours. The weekly and monthly goals follow from it and your work days (6 h on 5 days = 30 h a
   week). A day counts as a working day after 30 minutes of work. Goals only measure. They never
   stop tracking.
+- **How does overtime count?** (Work screen and onboarding) has two options:
+  - **Flexible** (the default for new installs): overtime is work over the goal of the week or
+    month. Long days and short days balance. The popover says "Over your weekly goal" when this
+    week's work passes the weekly goal.
+  - **Fixed hours**: overtime is work outside your work hours, counted per day.
+  Installs from before 1.1 keep Fixed hours, so their numbers do not change. Reports and the CSV
+  daily summary (`overtime_rule`, `overtime_hours`) use the same rule.
+- A finished week or month under its goal shows how much of the goal you reached ("77% of goal").
 - A change applies from today. A past week or month is always judged by the goal in force at the
   time, so changing a goal never changes history.
 - Reports cover any month, any year, or all time: totals, working days, average per working day,

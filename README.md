@@ -15,8 +15,9 @@ Everything stays on your Mac.
 
 - **It counts work by itself.** In your work hours, time in your work applications counts as
   work. Idle time, a locked screen and sleep never count.
-- **It tells you when to stop.** You see when you reach your daily goal and when your work hours
-  end. Work after that is overtime, and WorkPulse says so.
+- **It tells you when to stop.** You see when you reach your goal and when your work hours end.
+  You choose how overtime counts: work over the weekly goal (Flexible), or work outside your
+  work hours (Fixed hours).
 - **It has two profiles.** Work counts work time. Personal counts none. You change with one
   button: "Start work" or "End work".
 - **It counts agent work.** While Claude Code or Codex works on a task for you, that time can

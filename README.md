@@ -21,7 +21,7 @@ Everything stays on your Mac.
 - **It has two profiles.** Work counts work time. Personal counts none. You change with one
   button: "Start work" or "End work".
 - **It counts agent work.** While Claude Code or Codex works on a task for you, that time can
-  count as your work, also when you are away.
+  count as your work, also when you are away. You can count it only in the folders you choose.
 - **You can correct it.** The history is editable, and reports export to CSV.
 - **It can remind you to sleep.** One optional notification before your bedtime.
 

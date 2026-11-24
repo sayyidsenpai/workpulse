@@ -147,8 +147,9 @@ extension AppModel {
             heroes.append(hero)
         }
         (status, agentWorking, isOvertime, workHoursEnd, lastWorkHoursEnd, agentDisplay) = saved
-        return LazyVGrid(columns: Array(repeating: GridItem(.fixed(364), spacing: 14), count: 4), alignment: .leading, spacing: 14) {
-            ForEach(Array(heroes.enumerated()), id: \.offset) { HeroCard(hero: $0.element) }
+        // Each card at its own height, as in the popover.
+        return LazyVGrid(columns: Array(repeating: GridItem(.fixed(364), spacing: 14, alignment: .top), count: 4), alignment: .leading, spacing: 14) {
+            ForEach(Array(heroes.enumerated()), id: \.offset) { HeroCard(hero: $0.element).fixedSize(horizontal: false, vertical: true) }
         }
         .padding(14)
         .background(Wallpaper())

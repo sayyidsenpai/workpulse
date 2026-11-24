@@ -16,6 +16,8 @@ and that folder. It never reads prompts, transcripts or output.
 
 - Agent time is recorded as Work with the application "Claude Code" or "Codex" and the source
   "AI agent".
+- While an agent works, the status card shows the folder it works in, one chip per folder (the
+  full path is in the tooltip). With more than two folders it shows two and "+N more".
 - Your own work in a work app keeps its own application. Agent work fills in only where your own
   activity is not already work (idle, locked, non-work or ignored app), so nothing counts twice.
 - Sleep still records nothing, and in the Personal profile agent time is not counted.

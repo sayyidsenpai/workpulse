@@ -155,8 +155,10 @@ extension AppModel {
         case .agent:
             return Hero(title: model.statusText, symbol: "terminal", live: true,
                         label: "This session", big: thisSession, meta: hours,
-                        note: "An agent works for you. This time counts as work, also when you are idle.",
-                        fill: WP.cobalt, text: .white, sub: WP.onCobalt, striped: true, second: end)
+                        note: "This time counts as work, also when you are idle.",
+                        fill: WP.cobalt, text: .white, sub: WP.onCobalt, striped: true,
+                        chips: model.agentDisplay.chips, more: model.agentDisplay.more, moreHelp: model.agentDisplay.moreHelp,
+                        second: end)
         case .tracking:
             return Hero(title: model.statusText, symbol: "record.circle", live: true,
                         label: "This session", big: thisSession, meta: hours,
@@ -242,6 +244,10 @@ struct Hero {
     var sub: Color
     /// Diagonal stripes: the second signal for agent work.
     var striped = false
+    /// The folders agents work in, below the large value.
+    var chips: [AgentDisplay.Chip] = []
+    var more: String?
+    var moreHelp: String?
     var first: HeroAction?
     var second: HeroAction?
 }
@@ -251,14 +257,23 @@ struct HeroCard: View {
     let hero: Hero
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
+    @ViewBuilder private var chips: some View {
+        ForEach(hero.chips, id: \.label) { chip in
+            HeroChip(text: chip.text, symbol: "folder").help(chip.path).accessibilityLabel(chip.label)
+        }
+        if let more = hero.more { HeroChip(text: more, symbol: nil).help(hero.moreHelp ?? "").accessibilityHint(hero.moreHelp ?? "") }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
                 LiveSymbol(name: hero.symbol, size: 16, color: hero.text, live: hero.live).frame(width: 20, height: 20)
                     .id(hero.symbol + (hero.live ? "-live" : ""))
-                Text(hero.title).font(WP.font(14, .semibold)).lineLimit(1)
+                // The title is never cut: the meta text wraps instead.
+                Text(hero.title).font(WP.font(14, .semibold)).lineLimit(1).fixedSize()
                 Spacer(minLength: 8)
                 Text(hero.meta).font(WP.font(12, .semibold)).monospacedDigit().foregroundStyle(hero.sub)
+                    .multilineTextAlignment(.trailing).fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 0)
             VStack(alignment: .leading, spacing: 2) {
@@ -267,6 +282,15 @@ struct HeroCard: View {
                     Text(hero.big(now)).font(WP.font(48, .bold)).tracking(-1).monospacedDigit()
                         .lineLimit(1).minimumScaleFactor(0.6)
                 }
+            }
+            if !hero.chips.isEmpty {
+                // In one row when they fit, else one chip per line; a long name is cut in the middle.
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 6) { chips }
+                    VStack(alignment: .leading, spacing: 6) { chips }
+                }
+                .accessibilityElement(children: .contain)
+                .accessibilityLabel("Folders the agent works in")
             }
             if !hero.note.isEmpty {
                 Text(hero.note).font(WP.font(13, .medium)).fixedSize(horizontal: false, vertical: true)
@@ -659,5 +683,21 @@ struct DayOffConfirm: View {
             Image(systemName: "checkmark").font(.system(size: 10, weight: .bold)).foregroundStyle(WP.textBlue)
             Text(text).font(WP.font(12)).foregroundStyle(WP.secondary).fixedSize(horizontal: false, vertical: true)
         }
+    }
+}
+
+/// A folder chip on the status card: the same fill as the card's End work button.
+struct HeroChip: View {
+    let text: String
+    let symbol: String?
+
+    var body: some View {
+        HStack(spacing: 6) {
+            if let symbol { Image(systemName: symbol).font(.system(size: 12, weight: .semibold)).accessibilityHidden(true) }
+            Text(text).font(WP.font(12, .semibold)).lineLimit(1).truncationMode(.middle)
+        }
+        .padding(.horizontal, 10)
+        .frame(height: 26)
+        .background(WP.navy.opacity(0.32), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 }

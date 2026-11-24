@@ -29,26 +29,31 @@ public enum AgentSignals {
     ///   `quiet` seconds, or nil; and `staleFor`, set when a counted marker had gone quiet for
     ///   longer than that (agent interrupted or crashed without saying so): how long ago it was
     ///   last touched, so the caller can end the session there instead of now. Stale markers are removed.
-    public static func read(_ directory: URL, now: Date = Date(), quiet: TimeInterval, folders: [String] = []) -> (agent: String?, staleFor: TimeInterval?) {
+    ///   `sessions`: each counted working session, with the folder its hook reported (nil when unknown).
+    public static func read(_ directory: URL, now: Date = Date(), quiet: TimeInterval, folders: [String] = [])
+        -> (agent: String?, staleFor: TimeInterval?, sessions: [AgentSession]) {
         let fm = FileManager.default
         let directory = directory.resolvingSymlinksInPath()  // the data folder may be a symlink
         let files = (try? fm.contentsOfDirectory(at: directory, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
         var tools = Set<String>()
+        var sessions: [AgentSession] = []
         var staleFor: TimeInterval?
         for file in files where !file.lastPathComponent.hasPrefix(".") {
             guard let touched = (try? file.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate else { continue }
             let age = now.timeIntervalSince(touched)
-            let counted = folders.isEmpty || sessionFolder(file).map { isInside($0, folders) } == true
+            let folder = sessionFolder(file)
+            let counted = folders.isEmpty || folder.map { isInside($0, folders) } == true
             if age <= quiet {
                 guard counted else { continue }
                 let tool = String(file.lastPathComponent.prefix { $0 != "." })
                 tools.insert(names[tool] ?? tool)
+                sessions.append(AgentSession(agent: names[tool] ?? tool, folder: folder))
             } else {
                 try? fm.removeItem(at: file)
                 if counted { staleFor = min(staleFor ?? age, age) }
             }
         }
-        return (tools.isEmpty ? nil : tools.sorted().joined(separator: " + "), staleFor)
+        return (tools.isEmpty ? nil : tools.sorted().joined(separator: " + "), staleFor, sessions)
     }
 
     /// The working folder the hook wrote into a marker, or nil (empty marker from an older hook,
@@ -68,5 +73,67 @@ public enum AgentSignals {
             let base = URL(fileURLWithPath: folder).resolvingSymlinksInPath().standardizedFileURL.pathComponents
             return parts.count >= base.count && Array(parts.prefix(base.count)) == base
         }
+    }
+}
+
+/// One agent session that is working now: the agent's display name and the folder it works in.
+public struct AgentSession: Equatable, Sendable {
+    public var agent: String
+    /// The session's working folder; nil when its hook did not report one (an older hook).
+    public var folder: String?
+
+    public init(agent: String, folder: String?) {
+        self.agent = agent
+        self.folder = folder
+    }
+}
+
+/// What the status card says while agents work: the title and one chip per folder.
+public struct AgentDisplay: Equatable, Sendable {
+    public struct Chip: Equatable, Sendable {
+        /// "workpulse", "client-a/backend", or "Claude Code · workpulse" when several agents work.
+        public var text: String
+        /// The folder with `~` for the home folder, for the tooltip.
+        public var path: String
+        /// "Claude Code works in ~/dev/products/workpulse", for VoiceOver.
+        public var label: String
+    }
+
+    public var title: String
+    /// At most `maxChips`; the others are counted in `more`.
+    public var chips: [Chip]
+    /// "+2 more", or nil.
+    public var more: String?
+    /// The folders `more` stands for, for its tooltip.
+    public var moreHelp: String?
+
+    public static let maxChips = 2
+
+    public init(_ sessions: [AgentSession], home: String = NSHomeDirectory()) {
+        let agents = Set(sessions.map(\.agent))
+        title = agents.count > 1 ? "\(agents.count) agents working" : "\(agents.first ?? "Agent") working"
+        // One chip per agent and folder, in the order of the text the chips show.
+        var seen = Set<String>()
+        let known = sessions.compactMap { session in session.folder.map { (agent: session.agent, folder: $0) } }
+            .filter { seen.insert($0.agent + "\u{0}" + $0.folder).inserted }
+        func tilde(_ path: String) -> String {
+            path == home ? "~" : path.hasPrefix(home + "/") ? "~" + path.dropFirst(home.count) : path
+        }
+        // A folder name that two different folders share gets its parent folder too.
+        let names = Dictionary(grouping: Set(known.map(\.folder)), by: { URL(fileURLWithPath: $0).lastPathComponent })
+        let all: [Chip] = known.map { item in
+            let url = URL(fileURLWithPath: item.folder)
+            var name = url.lastPathComponent
+            if (names[name]?.count ?? 0) > 1 { name = url.deletingLastPathComponent().lastPathComponent + "/" + name }
+            return Chip(text: agents.count > 1 ? "\(item.agent) · \(name)" : name, path: tilde(item.folder),
+                        label: "\(item.agent) works in \(tilde(item.folder))")
+        }.sorted {
+            let order = $0.text.localizedStandardCompare($1.text)
+            return order == .orderedSame ? $0.path < $1.path : order == .orderedAscending
+        }
+        chips = Array(all.prefix(Self.maxChips))
+        let rest = all.dropFirst(Self.maxChips)
+        more = rest.isEmpty ? nil : "+\(rest.count) more"
+        moreHelp = rest.isEmpty ? nil : rest.map(\.path).joined(separator: ", ")
     }
 }

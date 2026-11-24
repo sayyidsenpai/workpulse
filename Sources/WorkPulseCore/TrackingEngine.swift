@@ -79,6 +79,8 @@ public final class TrackingEngine {
     public private(set) var asleep = false
     /// AI agent(s) currently working, as reported by their hooks ("Claude Code", "Codex"); nil = none.
     public private(set) var agent: String?
+    /// The agent sessions working now, with their folders (for display only).
+    public private(set) var agentSessions: [AgentSession] = []
     /// When the current work session began (see `AppSettings.workSessionStart`).
     public var workSessionStart: Date? { settings.workSessionStart }
     /// When the current idle stretch began (the last input), or nil when not idle.
@@ -458,7 +460,8 @@ public final class TrackingEngine {
 
     /// Reports which AI agent is working (nil = none), from the hook signals. `endedAgo` back-dates
     /// the end when the agent went quiet without saying so: its last sign of life was that long ago.
-    public func setAgent(_ name: String?, endedAgo: TimeInterval = 0) {
+    public func setAgent(_ name: String?, endedAgo: TimeInterval = 0, sessions: [AgentSession] = []) {
+        agentSessions = sessions
         guard name != agent else { return }
         agent = name
         notify(reconcile(name == nil ? "done" : "agent", at: time.uptime - max(0, endedAgo)))

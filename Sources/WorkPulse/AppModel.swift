@@ -109,6 +109,8 @@ final class AppModel {
     /// True from "End work" in work hours until the popover closes: the Personal card asks once.
     var offerDayOff = false
     var agentWorking = false
+    /// The title and folder chips of the status card while agents work.
+    var agentDisplay = AgentDisplay([])
     var suggestion: Suggestion?
     var agents: [AgentInfo] = []
     var workHoursEnd: Date?
@@ -250,6 +252,8 @@ final class AppModel {
         // Flexible: overtime is work over the weekly goal. Fixed hours: work outside the work hours.
         isOvertime = Goals.inOvertime(week: summary.week, profile: settings.profile, outsideHours: engine.isOvertime)
         agentWorking = engine.agentWorking
+        let display = AgentDisplay(engine.agentSessions)
+        if display != agentDisplay { agentDisplay = display }
         workHoursEnd = engine.workHoursEnd
         lastWorkHoursEnd = engine.lastWorkHoursEnd
         nextWorkHoursStart = engine.nextWorkHoursStart
@@ -337,7 +341,7 @@ final class AppModel {
     var statusText: String {
         switch headline {
         case .overtime: flexible ? "Over your weekly goal" : "Overtime"
-        case .agent: "\(engine.agent ?? "Agent") working"
+        case .agent: agentDisplay.title
         case .tracking: "Tracking work"
         case .nonwork: "Active · non-work"
         case .ignored: "Ignored application"

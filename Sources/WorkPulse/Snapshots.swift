@@ -24,6 +24,7 @@ extension AppModel {
                               to: folder.appendingPathComponent("editor\(suffix).png"))
             }
             await capture(statesSheet(), size: nil, appearance: appearance, to: folder.appendingPathComponent("states\(suffix).png"))
+            await capture(agentSheet(), size: nil, appearance: appearance, to: folder.appendingPathComponent("agent-folders\(suffix).png"))
             refresh()
             for step in 0..<4 {
                 await capture(OnboardingView(step: step).environment(self), size: OnboardingView.size, appearance: appearance,
@@ -107,6 +108,7 @@ extension AppModel {
         summary.sessionWork = 2712
         idleSince = Date().addingTimeInterval(-900)
         add(.tracking(.work))
+        agentDisplay = AgentDisplay([AgentSession(agent: "Claude Code", folder: NSHomeDirectory() + "/dev/products/workpulse")])
         add(.tracking(.work), agent: true)
         add(.tracking(.work), overtime: true)
         add(.tracking(.nonwork))
@@ -115,6 +117,37 @@ extension AppModel {
         add(.personal, ask: true)
         add(.tracking(.excluded))
         return LazyVGrid(columns: Array(repeating: GridItem(.fixed(364), spacing: 14), count: 4), spacing: 14) {
+            ForEach(Array(heroes.enumerated()), id: \.offset) { HeroCard(hero: $0.element) }
+        }
+        .padding(14)
+        .background(Wallpaper())
+    }
+
+    /// The agent card for each folder case, after work hours ended at 17.00.
+    private func agentSheet() -> some View {
+        let home = NSHomeDirectory()
+        func s(_ agent: String, _ folder: String?) -> AgentSession { AgentSession(agent: agent, folder: folder.map { home + $0 }) }
+        let cases: [[AgentSession]] = [
+            [s("Claude Code", "/dev/products/workpulse")],
+            [s("Claude Code", "/dev/products/workpulse"), s("Claude Code", "/dev/clients/storefront-api")],
+            [s("Claude Code", "/dev/products/workpulse"), s("Codex", "/dev/clients/storefront-api")],
+            [s("Claude Code", "/dev/clients/a-very-long-client-project-name-for-acme-backend-api")],
+            [s("Claude Code", "/dev/client-a/backend"), s("Claude Code", "/dev/client-b/backend")],
+            ["workpulse", "storefront-api", "billing-web", "scripts"].map { s("Claude Code", "/dev/" + $0) },
+            [s("Claude Code", nil)],
+        ]
+        let saved = (status, agentWorking, isOvertime, workHoursEnd, lastWorkHoursEnd, agentDisplay)
+        status = .tracking(.work); agentWorking = true; isOvertime = false
+        workHoursEnd = nil
+        lastWorkHoursEnd = Calendar.current.date(bySettingHour: 17, minute: 0, second: 0, of: Date())
+        summary.sessionWork = 253
+        var heroes: [Hero] = []
+        for sessions in cases {
+            agentDisplay = AgentDisplay(sessions)
+            heroes.append(hero)
+        }
+        (status, agentWorking, isOvertime, workHoursEnd, lastWorkHoursEnd, agentDisplay) = saved
+        return LazyVGrid(columns: Array(repeating: GridItem(.fixed(364), spacing: 14), count: 4), alignment: .leading, spacing: 14) {
             ForEach(Array(heroes.enumerated()), id: \.offset) { HeroCard(hero: $0.element) }
         }
         .padding(14)

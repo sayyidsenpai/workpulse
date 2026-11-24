@@ -173,6 +173,47 @@ final class AgentTests: XCTestCase {
         XCTAssertFalse(AgentSignals.isInside("/Users/me", work), "a parent folder is not inside")
     }
 
+    func testDisplayShowsOneChipPerFolder() throws {
+        let home = "/Users/me"
+        func s(_ agent: String, _ folder: String?) -> AgentSession { AgentSession(agent: agent, folder: folder) }
+
+        let one = AgentDisplay([s("Claude Code", "/Users/me/dev/workpulse"), s("Claude Code", "/Users/me/dev/workpulse")], home: home)
+        XCTAssertEqual(one.title, "Claude Code working")
+        XCTAssertEqual(one.chips.map(\.text), ["workpulse"], "two sessions in one folder: one chip")
+        XCTAssertEqual(one.chips.first?.path, "~/dev/workpulse")
+        XCTAssertEqual(one.chips.first?.label, "Claude Code works in ~/dev/workpulse")
+        XCTAssertNil(one.more)
+
+        let agents = AgentDisplay([s("Codex", "/Users/me/dev/shop"), s("Claude Code", "/Users/me/dev/workpulse")], home: home)
+        XCTAssertEqual(agents.title, "2 agents working")
+        XCTAssertEqual(agents.chips.map(\.text), ["Claude Code · workpulse", "Codex · shop"])
+
+        let same = AgentDisplay([s("Claude Code", "/Users/me/client-b/backend"), s("Claude Code", "/Users/me/client-a/backend")], home: home)
+        XCTAssertEqual(same.chips.map(\.text), ["client-a/backend", "client-b/backend"], "a shared folder name gets its parent")
+
+        let many = AgentDisplay(["a", "b", "c", "d"].map { s("Claude Code", "/Users/me/dev/" + $0) }, home: home)
+        XCTAssertEqual(many.chips.map(\.text), ["a", "b"])
+        XCTAssertEqual(many.more, "+2 more")
+        XCTAssertEqual(many.moreHelp, "~/dev/c, ~/dev/d")
+
+        let unknown = AgentDisplay([s("Claude Code", nil)], home: home)
+        XCTAssertEqual(unknown.title, "Claude Code working")
+        XCTAssertTrue(unknown.chips.isEmpty, "no folder reported: no chip")
+        XCTAssertEqual(AgentDisplay([], home: home).title, "Agent working")
+        XCTAssertEqual(AgentDisplay([s("Claude Code", "/opt/x")], home: home).chips.first?.path, "/opt/x", "outside home: the full path")
+    }
+
+    func testSignalsReportTheFolderOfEachCountedSession() throws {
+        let now = Date()
+        try marker("claude-code.a", folder: "/Users/me/dev/work/app", age: 10, now: now)
+        try marker("codex.b", folder: "/Users/me/elsewhere", age: 10, now: now)
+        try marker("codex.c", folder: "", age: 10, now: now)
+        let all = AgentSignals.read(directory, now: now, quiet: 900).sessions
+        XCTAssertEqual(Set(all.map { "\($0.agent) \($0.folder ?? "-")" }), ["Claude Code /Users/me/dev/work/app", "Codex /Users/me/elsewhere", "Codex -"])
+        let work = AgentSignals.read(directory, now: now, quiet: 900, folders: ["/Users/me/dev/work"]).sessions
+        XCTAssertEqual(work, [AgentSession(agent: "Claude Code", folder: "/Users/me/dev/work/app")], "only counted sessions are shown")
+    }
+
     // MARK: Hook script
 
     private func runHook(_ arguments: [String], input: String) throws -> String {

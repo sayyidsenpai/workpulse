@@ -5,6 +5,8 @@
 #   agent-hook.sh <tool> busy    on UserPromptSubmit, PreToolUse, PostToolUse
 #   agent-hook.sh <tool> done    on Stop, SessionEnd
 # <tool> is claude-code or codex.
+# A turn that stops while a background task still runs (Claude Code lists it in
+# `background_tasks` with status "running") is not done: the marker stays until a later signal.
 #
 # It only writes or removes a marker file named after the tool and the session id, and touches
 # `.seen-<tool>` so WorkPulse can show that this agent is connected. The marker holds the
@@ -16,13 +18,15 @@
 dir="${WORKPULSE_DATA_DIR:-$HOME/Library/Application Support/WorkPulse}/agents"
 input="$(cat 2>/dev/null)"
 id="$(printf '%s\n' "$input" | sed -n 's/.*"session_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' 2>/dev/null | head -n 1 | tr -cd 'A-Za-z0-9_-')"
+# Background tasks that still run when the turn stops; their fields hold no arrays.
+running="$(printf '%s\n' "$input" | sed -n 's/.*"background_tasks"[[:space:]]*:[[:space:]]*\[\([^]]*\)\].*/\1/p' 2>/dev/null | grep -c '"status"[[:space:]]*:[[:space:]]*"running"' 2>/dev/null)"
 # The first "cwd" is the session's own: the common fields come before the tool input.
 cwd="$(printf '%s\n' "$input" | grep -o '"cwd"[[:space:]]*:[[:space:]]*"[^"]*"' 2>/dev/null | head -n 1 | sed 's/^"cwd"[[:space:]]*:[[:space:]]*"//; s/"$//')"
 tool="$(printf '%s' "${1:-agent}" | tr -cd 'A-Za-z0-9_-')"
 file="$dir/$tool.${id:-session}"
 
 mkdir -p "$dir" 2>/dev/null && touch "$dir/.seen-$tool" 2>/dev/null
-if [ "$2" = "busy" ]; then
+if [ "$2" = "busy" ] || [ "${running:-0}" -gt 0 ] 2>/dev/null; then
     printf '%s' "$cwd" > "$file" 2>/dev/null
 else
     rm -f "$file" 2>/dev/null

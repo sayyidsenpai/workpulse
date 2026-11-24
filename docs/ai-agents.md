@@ -23,6 +23,8 @@ and that folder. It never reads prompts, transcripts or output.
   only sessions that work in one of these folders, or in a folder inside them, count. A session
   that moves to another folder stops counting at its next signal. With no folder added, agent
   work counts in every folder.
+- When Claude Code ends its turn while a background command or task still runs, the agent is
+  still working: the time counts until it reports again. Codex does not report background tasks.
 - If an agent is interrupted or crashes it cannot say it stopped. After 15 minutes without any
   hook signal (Settings › AI agents) the session is ended at the last signal, not at the time it
   was noticed.

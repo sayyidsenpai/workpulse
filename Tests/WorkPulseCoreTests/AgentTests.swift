@@ -215,6 +215,16 @@ final class AgentTests: XCTestCase {
         XCTAssertEqual(try String(contentsOf: agents.appendingPathComponent("codex.etcxy"), encoding: .utf8), "/tmp",
                        "the marker holds only the working folder")
 
+        // A turn that stops while a background command runs is not done: the marker stays.
+        let waiting = #"{"session_id":"0199-ab_cd","cwd":"/work","hook_event_name":"Stop","background_tasks":[{"id":"b1","type":"shell","status":"running","description":"Run tests [all]"}],"session_crons":[]}"#
+        XCTAssertEqual(try runHook(["claude-code", "done"], input: waiting), "")
+        XCTAssertEqual(try String(contentsOf: agents.appendingPathComponent("claude-code.0199-ab_cd"), encoding: .utf8), "/work")
+        let finished = #"{"session_id":"0199-ab_cd","cwd":"/work","hook_event_name":"Stop","background_tasks":[{"id":"b1","type":"shell","status":"completed"}],"session_crons":[{"id":"c1","schedule":"*/5 * * * *","recurring":true,"prompt":"check"}]}"#
+        _ = try runHook(["claude-code", "done"], input: finished)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: agents.appendingPathComponent("claude-code.0199-ab_cd").path),
+                       "a finished task or a scheduled prompt is not work in progress")
+        _ = try runHook(["claude-code", "busy"], input: input)
+
         XCTAssertEqual(try runHook(["claude-code", "done"], input: input), "")
         XCTAssertEqual(AgentSignals.read(agents, quiet: 900).agent, "Codex")
 

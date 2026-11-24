@@ -9,15 +9,20 @@ while you are idle, the screen is locked or another app is in front. A reply tha
 is an hour of work.
 
 Detection is exact, not guessed: the agents' own hooks tell WorkPulse when a turn starts, when a
-tool runs and when the turn ends. Each hook runs `agent-hook.sh`, which touches or removes an
-empty marker file in `~/Library/Application Support/WorkPulse/agents/`. WorkPulse sees only that
-a marker exists and when it was last touched. It never reads prompts, transcripts or output.
+tool runs and when the turn ends. Each hook runs `agent-hook.sh`, which writes or removes a
+marker file in `~/Library/Application Support/WorkPulse/agents/`. The marker holds only the
+folder the agent session works in. WorkPulse sees that a marker exists, when it was last written
+and that folder. It never reads prompts, transcripts or output.
 
 - Agent time is recorded as Work with the application "Claude Code" or "Codex" and the source
   "AI agent".
 - Your own work in a work app keeps its own application. Agent work fills in only where your own
   activity is not already work (idle, locked, non-work or ignored app), so nothing counts twice.
 - Sleep still records nothing, and in the Personal profile agent time is not counted.
+- You can count agent work only in some folders (Settings › AI agents › "Add Folder…"). Then
+  only sessions that work in one of these folders, or in a folder inside them, count. A session
+  that moves to another folder stops counting at its next signal. With no folder added, agent
+  work counts in every folder.
 - If an agent is interrupted or crashes it cannot say it stopped. After 15 minutes without any
   hook signal (Settings › AI agents) the session is ended at the last signal, not at the time it
   was noticed.

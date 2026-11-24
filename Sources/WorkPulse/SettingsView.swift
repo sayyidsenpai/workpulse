@@ -150,8 +150,56 @@ struct SettingsView: View {
                     .disabled(!model.settings.countAgentWork)
             }
             .divided()
-            caption("While a connected agent works on a task, the time counts as work. An agent is connected after WorkPulse receives the first signal from its hook. WorkPulse reads only this signal. It does not read prompts or output.")
+            agentFolders.divided().disabled(!model.settings.countAgentWork)
+            caption("While a connected agent works on a task, the time counts as work. An agent is connected after WorkPulse receives the first signal from its hook. WorkPulse reads only this signal and the folder the agent works in. It does not read prompts or output.")
         }
+    }
+
+    /// The folders where agent work counts. No folder: every folder counts.
+    private var agentFolders: some View {
+        let folders = model.settings.agentFolders
+        return VStack(alignment: .leading, spacing: 10) {
+            row("Count agent work only in these folders",
+                sub: folders.isEmpty ? "No folder added. Agent work counts in every folder." : "Agent work in other folders does not count.") {
+                Button("Add Folder…") { addAgentFolder() }.buttonStyle(WPButtonStyle())
+            }
+            if !folders.isEmpty {
+                VStack(spacing: 0) {
+                    ForEach(folders, id: \.self) { folder in
+                        if folder != folders.first { line }
+                        HStack(spacing: 10) {
+                            Image(systemName: "folder").font(.system(size: 14, weight: .medium)).foregroundStyle(WP.secondary)
+                                .frame(width: 18).accessibilityHidden(true)
+                            VStack(alignment: .leading, spacing: 0) {
+                                Text(FileManager.default.displayName(atPath: folder)).font(WP.font(13, .semibold)).foregroundStyle(WP.ink)
+                                Text((folder as NSString).abbreviatingWithTildeInPath).font(WP.font(12)).foregroundStyle(WP.caption)
+                                    .lineLimit(1).truncationMode(.middle).textSelection(.enabled)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            Button("Remove") { model.binding(\.agentFolders).wrappedValue.removeAll { $0 == folder } }
+                                .buttonStyle(WPButtonStyle())
+                                .accessibilityLabel("Remove \(FileManager.default.displayName(atPath: folder))")
+                        }
+                        .padding(.horizontal, 12).padding(.vertical, 10)
+                    }
+                }
+                .background(WP.hover, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .accessibilityElement(children: .contain)
+                .accessibilityLabel("Agent folders")
+            }
+        }
+    }
+
+    private func addAgentFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = true
+        panel.directoryURL = FileManager.default.homeDirectoryForCurrentUser
+        panel.message = "Choose the folders where agent work counts. Folders inside them count too."
+        guard panel.runModal() == .OK else { return }
+        let added = panel.urls.map(\.path).filter { !model.settings.agentFolders.contains($0) }
+        if !added.isEmpty { model.binding(\.agentFolders).wrappedValue += added }
     }
 
     private func agentList(oneLine: Bool) -> some View {

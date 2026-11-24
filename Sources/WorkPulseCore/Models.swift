@@ -370,6 +370,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var countAgentWork = true
     /// Minutes without any sign of life after which a working agent is assumed to have stopped.
     public var agentQuietMinutes = 15
+    /// Agent work counts only for sessions working inside one of these folders; empty = every folder.
+    public var agentFolders: [String] = []
     public var profile = Profile.work
     public var schedule = WorkSchedule()
     /// Tell the user once when work hours end while they still work.
@@ -407,6 +409,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         lastBackupDay = c.value(.lastBackupDay, lastBackupDay)
         countAgentWork = c.value(.countAgentWork, countAgentWork)
         agentQuietMinutes = c.value(.agentQuietMinutes, agentQuietMinutes)
+        agentFolders = c.value(.agentFolders, agentFolders)
         profile = c.value(.profile, profile)
         schedule = c.value(.schedule, schedule)
         notifyWorkEnd = c.value(.notifyWorkEnd, notifyWorkEnd)

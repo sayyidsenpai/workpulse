@@ -141,6 +141,38 @@ final class AgentTests: XCTestCase {
         XCTAssertNil(AgentSignals.read(directory, now: now, quiet: 900).staleFor, "reported once")
     }
 
+    private func marker(_ name: String, folder: String, age: TimeInterval, now: Date) throws {
+        try marker(name, age: age, now: now)
+        let file = directory.appendingPathComponent(name)
+        try Data(folder.utf8).write(to: file)
+        try FileManager.default.setAttributes([.modificationDate: now.addingTimeInterval(-age)], ofItemAtPath: file.path)
+    }
+
+    func testSignalsCountOnlyTheChosenFolders() throws {
+        let now = Date()
+        let work = ["/Users/me/dev/work"]
+        try marker("claude-code.a", folder: "/Users/me/dev/work/app", age: 10, now: now)
+        try marker("codex.b", folder: "/Users/me/dev/work-old", age: 10, now: now)
+        try marker("codex.c", folder: "", age: 10, now: now)   // an older hook wrote no folder
+        XCTAssertEqual(AgentSignals.read(directory, now: now, quiet: 900).agent, "Claude Code + Codex", "no folder chosen: every session counts")
+        XCTAssertEqual(AgentSignals.read(directory, now: now, quiet: 900, folders: work).agent, "Claude Code",
+                       "work-old is not inside work, and an unknown folder does not count")
+        XCTAssertEqual(AgentSignals.read(directory, now: now, quiet: 900, folders: ["/Users/me/dev/work/app"]).agent, "Claude Code",
+                       "the folder itself counts")
+
+        // A stale marker outside the folders is removed but does not back-date the end of counted work.
+        try marker("codex.b", folder: "/Users/me/elsewhere", age: 1200, now: now)
+        let stale = AgentSignals.read(directory, now: now, quiet: 900, folders: work)
+        XCTAssertNil(stale.staleFor)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: directory.appendingPathComponent("codex.b").path))
+
+        // JSON escapes in the folder are decoded; symbolic links are resolved on both sides.
+        try marker("claude-code.a", folder: #"/Users/me/dev/work/café"#, age: 10, now: now)
+        XCTAssertEqual(AgentSignals.read(directory, now: now, quiet: 900, folders: work).agent, "Claude Code")
+        XCTAssertTrue(AgentSignals.isInside("/tmp/x", ["/private/tmp"]))
+        XCTAssertFalse(AgentSignals.isInside("/Users/me", work), "a parent folder is not inside")
+    }
+
     // MARK: Hook script
 
     private func runHook(_ arguments: [String], input: String) throws -> String {
@@ -173,13 +205,15 @@ final class AgentTests: XCTestCase {
         XCTAssertNil(AgentSignals.lastSignal("codex", in: agents), "Codex is not connected yet")
         XCTAssertNotNil(AgentSignals.lastSignal("claude-code", in: agents))
         XCTAssertEqual(try markers(), ["claude-code.0199-ab_cd"])
-        XCTAssertEqual(try Data(contentsOf: agents.appendingPathComponent("claude-code.0199-ab_cd")).count, 0, "the marker is empty: no prompt text is stored")
+        XCTAssertEqual(try Data(contentsOf: agents.appendingPathComponent("claude-code.0199-ab_cd")).count, 0, "no cwd in the input: the marker stays empty, no prompt text is stored")
         XCTAssertEqual(AgentSignals.read(agents, quiet: 900).agent, "Claude Code")
 
         // A second session of another tool, with multi-line JSON and a hostile session id.
         _ = try runHook(["codex", "busy"], input: "{\n  \"session_id\": \"../../etc/x y\",\n  \"cwd\": \"/tmp\"\n}")
         XCTAssertEqual(try markers(), ["claude-code.0199-ab_cd", "codex.etcxy"],
                        "the session id cannot escape the folder")
+        XCTAssertEqual(try String(contentsOf: agents.appendingPathComponent("codex.etcxy"), encoding: .utf8), "/tmp",
+                       "the marker holds only the working folder")
 
         XCTAssertEqual(try runHook(["claude-code", "done"], input: input), "")
         XCTAssertEqual(AgentSignals.read(agents, quiet: 900).agent, "Codex")

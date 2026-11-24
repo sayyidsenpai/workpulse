@@ -74,7 +74,8 @@ final class ActivityMonitor {
             engine.appActivated(.init(bundleID: id, name: app.localizedName ?? id))
         }
         if let directory = agentsDirectory {
-            let signals = AgentSignals.read(directory, quiet: Double(engine.settings.agentQuietMinutes) * 60)
+            let signals = AgentSignals.read(directory, quiet: Double(engine.settings.agentQuietMinutes) * 60,
+                                            folders: engine.settings.agentFolders)
             engine.setAgent(signals.agent, endedAgo: signals.staleFor ?? 0)
         }
         let idle = idleSeconds
